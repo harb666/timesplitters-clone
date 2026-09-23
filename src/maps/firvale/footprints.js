@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { groundHeight as G } from '../../core/world.js';
 import { Frame, rng, atlasQuad, DISPLAY } from './buildings.js';
-import { area, centroid, obb, clip, triangulate, Mesher, flatToPts } from './geom.js';
+import { area, centroid, obb, clip, triangulate, Mesher, flatToPts, inPoly } from './geom.js';
 
 const RES = new Set(['house', 'terrace', 'semidetached_house', 'detached', 'residential', 'apartments', 'bungalow']);
 const SHED = new Set(['garage', 'garages', 'roof', 'service', 'shed', 'hut']);
@@ -160,9 +160,13 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   };
   let miniMart = null;
   if (miniMartAt) { miniMart = nearPlot(miniMartAt[0], miniMartAt[1], 25); if (miniMart) miniMart.shop = { cat: 'grocer', cell: shopCells.miniMart[0], miniMart: true, awning: '#1f8a4c', stall: true, aboard: true }; }
+  const missed = [], petrol = [];
   for (const [x, z, cat] of osm.shops) {
-    if (cat === 'petrol') continue;
-    const p = nearPlot(x, z, 26);
+    if (cat === 'petrol') { petrol.push([x, z]); continue; }
+    // a shop inside a bigger building (flats over shops, units) goes on that building's street wall
+    const big = bigWallNear(list, net, x, z);
+    if (big) { missed.push({ x, z, cat, wall: big }); continue; }
+    const p = nearPlot(x, z, 26) || nearPlot(x, z, 45);
     if (!p) continue;
     p.shop = { cat, cell: cellFor(cat) };
     if (cat === 'grocer' && R() < 0.7) { p.shop.stall = true; p.shop.awning = ['#b3121f', '#2f7d2f', '#1e3a8a'][(R() * 3) | 0]; }
@@ -189,9 +193,34 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   }
   ms.flush(batch); detailMs.flush(batch, true);
   finishHospital(batch, M, world, pending);
+  // ---- shops on the walls of bigger buildings, and the petrol stations ----
+  const used = [];
+  for (const m of missed) {
+    const { a, b, n, L } = m.wall;
+    const W = Math.min(L - 0.6, m.cat === 'office' || m.cat === 'community' ? 5 : 6.2);
+    if (W < 3.2) continue;
+    const ex = (b[0] - a[0]) / L, ez = (b[1] - a[1]) / L;
+    let t = (m.x - a[0]) * ex + (m.z - a[1]) * ez;
+    t = Math.max(W / 2 + 0.3, Math.min(L - W / 2 - 0.3, t));
+    // next to (not on top of) another shop already put on this wall
+    for (let k = 0; k < 4; k++) { const hit = used.find((u) => u.wall === m.wall.key && Math.abs(u.t - t) < (u.W + W) / 2 + 0.3); if (!hit) break; t = hit.t + (t >= hit.t ? 1 : -1) * ((hit.W + W) / 2 + 0.4); }
+    if (t < W / 2 || t > L - W / 2) continue;
+    used.push({ wall: m.wall.key, t, W });
+    const cx = a[0] + ex * t + n[0] * 0.02, cz = a[1] + ez * t + n[1] * 0.02, ry = Math.atan2(n[0], n[1]);
+    const f = new Frame(batch, cx, cz, ry, G(cx + n[0] * 1.2, cz + n[1] * 1.2));
+    const S = { cat: m.cat, cell: cellFor(m.cat) };
+    if ((m.cat === 'takeaway' || m.cat === 'cafe' || m.cat === 'barber') && R() < 0.5) S.aboard = true;
+    shopFront(f, W, S, M, signs, R, 0);
+    shopSpots.push({ x: cx, z: cz, ry, front: [cx + n[0] * 1.8, cz + n[1] * 1.8], cat: m.cat, sign: S.cell, gF: f.y0 });
+  }
+  const stations = []; for (const [x, z] of petrol) if (!stations.some(([a, b]) => Math.hypot(a - x, b - z) < 40)) stations.push([x, z]);   // (shop + fuel points of one station)
+  for (const [x, z] of stations) petrolStation(batch, M, world, net, x, z);
   // ---- pass 4: back yards behind the terraces (now every building has its colliders) ----
   const RY = rng(77);
   for (const B of list) if (B.type === 'res' && !B.modern && B.plots) backYards(B, batch, M, world, net, RY);
+  for (const B of list) if (B.type === 'res' && B.modern && B.plots) rearGardens(B, batch, M, world, net);
+  roadsideBoundaries(list, batch, M, world, net);
+  BOUND.clear();
   const residential = list.filter((b) => b.type === 'res');
   return { shopSpots, miniMart: shopSpots.find((s) => s.miniMart), residential, list };
 }
@@ -344,6 +373,7 @@ function backYards(B, batch, M, world, net, R) {
       f.run(M.stone, -b - 0.01, -a + 0.01, 0, 0.3, wh - 0.01, wh + 0.07, { color: '#b9ae9a', detail: true });
     }
     f.run(M.wood, -gx - gw / 2, -gx + gw / 2, -0.02, 0.06, 0.03, wh * 0.9, { color: ['#3d5a3a', '#5a3b2a', '#2f3e5c', '#6b6b6b'][(R() * 4) | 0], detail: true });
+    noteBound(...f.world(-W / 2, 0), ...f.world(W / 2, 0));
     const [wx, wz] = f.world(0, 0); world.addOBB(wx, wz, W / 2, 0.12, Math.atan2(-F.nx, -F.nz), f.y0 - 1, f.y0 + wh, 'wall');
     // party wall down the side of the yard (one per plot, on its a0 edge; the row end gets both)
     const sides = pl.k === B.nPlots - 1 ? [pl.a0, pl.a1] : [pl.a0];
@@ -421,6 +451,7 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
         for (const [a, b] of [[-W / 2, dx - 0.6], [dx + 0.6, W / 2]].map(([a, b]) => [Math.min(a, b), Math.max(a, b)])) {
           if (b - a < 0.2) continue;
           if (B.modern && pl.k % 3 !== 2) {
+            noteBound(...f.world(a, z), ...f.world(b, z));
             if (pl.k % 3 === 0) f.run(M.hedge, a, b, z, 0.7, -0.1, 1.1, { color: '#3f6b35', detail: true });       // privet hedge
             else {                                                                                                // low fence
               for (let x = a + 0.1; x < b; x += 1.8) f.run(M.wood, x - 0.04, x + 0.04, z, 0.08, -0.2, 0.9, { color: '#6b5a44', detail: true });
@@ -429,6 +460,7 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
             continue;
           }
           f.run(M.brick, a, b, z, 0.24, -0.35, 0.8, { tile: 1.3, color: tint, detail: true });
+          noteBound(...f.world(a, z), ...f.world(b, z));
           f.run(M.stone, a - 0.01, b + 0.01, z, 0.3, 0.8, 0.9, { color: '#c8bca6', detail: true });
         }
         if (R() < 0.5) { const bc = ['#2a2a2a', '#2d4f8c', '#6b4a2b', '#2f6b36'][(R() * 4) | 0]; f.box(M.plastic, 1.6 * m, 0.55, Math.min(z - 0.5, 1.2), 0.6, 1.05, 0.7, { color: bc, detail: true }); }
@@ -438,26 +470,199 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     }
   } else {
     // ---- shopfront: frame, display, door, stall riser, fascia sign, shutter box ----
-    const S = pl.shop, cell = signs.cell(S.cell);
-    f.box(M.darkMetal, 0, 1.6, D + 0.05, W - 0.3, 3.2, 0.12, { color: '#2a2a2a' });
-    const dv = DISPLAY[S.miniMart ? 'miniMart' : S.cat] ?? 0, du = (dv % 4) * 0.25, dvv = dv < 4 ? 0.5 : 0;
-    f.geo(M.display, atlasQuad(W - 1.8, 2.2, du, dvv, du + 0.25, dvv + 0.5), 0.55, 1.6, D + 0.13);
-    f.box(M.glass, -W / 2 + 0.75, 1.25, D + 0.1, 0.95, 2.3, 0.06, { color: '#ffffff' });
-    f.box(M.stone, 0, 0.25, D + 0.12, W - 0.3, 0.4, 0.14, { color: '#3a3a3a' });
-    f.geo(M.sign, atlasBox(W - 0.2, 0.85, 0.2, cell.u0, cell.v0, cell.u1, cell.v1), 0, 3.6, D + 0.2);
-    f.box(M.metal, 0, 3.1, D + 0.2, W - 0.4, 0.22, 0.25, { color: '#9aa0a3', detail: true });
-    if (S.cat === 'tolet' || R() < 0.1) f.box(M.metal, 0.55, 2.45, D + 0.16, W - 1.8, 1.1, 0.04, { color: '#8e9497' });
-    if (S.awning) for (let i = 0; i < 6; i++) f.box(M.fabric, -W / 2 + 0.35 + (i + 0.5) * (W - 0.7) / 6, 2.9, D + 0.95, (W - 0.7) / 6, 0.05, 1.6, { color: i % 2 ? '#f2efe6' : S.awning, rx: 0.32, detail: true });
-    if (S.stall) for (let i = 0; i < Math.floor((W - 1.6) / 0.95); i++) {
-      const x = -W / 2 + 1.6 + i * 0.95;
-      f.box(M.wood, x, 0.35, D + 0.9, 0.85, 0.7, 0.6, { color: '#8a6a44', detail: true });
-      f.box(M.fruit, x, 0.78, D + 0.9, 0.78, 0.18, 0.52, { color: ['#e35d1a', '#4caf50', '#f4d03f', '#c0392b', '#7d3c98'][(R() * 5) | 0], detail: true });
-    }
-    if (S.aboard) f.box(M.wood, W / 2 - 0.8, 0.5, D + 1.4, 0.6, 0.95, 0.12, { color: '#222', rx: 0.12, detail: true });
-    if (S.cat === 'pharmacy') { f.box(M.signalLens, W / 2 - 0.3, 4.1, D + 0.45, 0.1, 0.7, 0.7, { color: '#19c24a' }); }
+    const S = pl.shop;
+    shopFront(f, W, S, M, signs, R, D);
     upper(4.9 - (eH < 6.3 ? 0.4 : 0)); if (B.storeys >= 3) upper(4.9 + FLOOR);
     shopSpots.push({ x: fx, z: fz, ry: Math.atan2(F.nx, F.nz), front: F.toW(am, B.dMax + 1.8), cat: S.cat, sign: S.cell, miniMart: !!S.miniMart, gF: pl.gF });
   }
+}
+
+// Boundaries already built (garden walls, yard walls, fences), so the
+// roadside pass doesn't double them up.
+const BOUND = new Map();
+const bKey = (x, z) => Math.floor(x / 4) * 100003 + Math.floor(z / 4);
+function noteBound(x0, z0, x1, z1) {
+  const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 2));
+  for (let k = 0; k <= n; k++) { const x = x0 + (x1 - x0) * k / n, z = z0 + (z1 - z0) * k / n, key = bKey(x, z); if (!BOUND.has(key)) BOUND.set(key, []); BOUND.get(key).push([x, z]); }
+}
+function nearBound(x, z, r) {
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [a, b] of BOUND.get(bKey(x + i * 4, z + j * 4)) || []) if ((a - x) ** 2 + (b - z) ** 2 < r * r) return true;
+  return false;
+}
+
+// Where the side or back of a house faces a street across a strip of
+// garden, the plot is walled (terraces: 1.5 m brick wall with coping) or
+// fenced (semis: close-board fence / hedge) along the back of the pavement.
+function roadsideBoundaries(list, batch, M, world, net) {
+  const grid = new Map(), GK = (x, z) => Math.floor(x / 30) * 7919 + Math.floor(z / 30);
+  for (const B of list) if (B.type === 'res' && B.front) { const k = GK(B.o.cx, B.o.cz); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(B); }
+  const houseAt = (x, z) => {
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const B of grid.get(GK(x + i * 30, z + j * 30)) || []) {
+      const dx = x - B.o.cx, dz = z - B.o.cz; if (dx * dx + dz * dz > (B.o.hu + 1) ** 2) continue;
+      if (inPoly(B.P, x, z)) return B;
+    }
+    return null;
+  };
+  for (const r of net.roads) {
+    if (!(r.kind === 'a' || r.kind === 'b' || r.kind === 'r') || r.pave <= 0 || r.length < 8) continue;
+    for (const side of [1, -1]) {
+      let run = null;
+      const flush = () => { if (run && run.pts.length >= 2) {
+        const { B, pts } = run;
+        for (let i = 0; i + 1 < pts.length; i++) {
+          const [x0, z0] = pts[i], [x1, z1] = pts[i + 1];
+          if (B.modern) { if (B.i % 3 === 0) { const g0 = G(x0, z0), g1 = G(x1, z1); batch.sloped(M.hedge, x0, z0, x1, z1, 0.8, g0 - 0.2, g1 - 0.2, g0 + 1.6, g1 + 1.6, { color: '#3f6b35' }); world.addOBB((x0 + x1) / 2, (z0 + z1) / 2, 0.4, Math.hypot(x1 - x0, z1 - z0) / 2, Math.atan2(x1 - x0, z1 - z0), g0 - 1, g0 + 1.5, 'hedge'); }
+            else fenceRun(batch, M, world, x0, z0, x1, z1); }
+          else {
+            const g0 = G(x0, z0), g1 = G(x1, z1);
+            batch.sloped(M.brick, x0, z0, x1, z1, 0.24, g0 - 0.4, g1 - 0.4, g0 + 1.45, g1 + 1.45, { color: B.tint, tile: 1.3, detail: true });
+            batch.sloped(M.stone, x0, z0, x1, z1, 0.32, g0 + 1.45, g1 + 1.45, g0 + 1.55, g1 + 1.55, { color: '#b9ae9a', detail: true });
+            world.addOBB((x0 + x1) / 2, (z0 + z1) / 2, 0.12, Math.hypot(x1 - x0, z1 - z0) / 2, Math.atan2(x1 - x0, z1 - z0), g0 - 1, g0 + 1.5, 'wall');
+          }
+        }
+      } run = null; };
+      for (let s = 1; s < r.length - 1; s += 2) {
+        const p = net.pointAt(r, s, side * (r.half + r.pave + 0.2), {});
+        const nx = p.tz * side, nz = -p.tx * side;                                          // away from the road
+        let ok = !net.onRoadOrPavement(p.x, p.z, -0.05) && !nearBound(p.x, p.z, 1.6) && !houseAt(p.x, p.z);
+        let B = null;
+        if (ok) {
+          const hit = world.raycastBoxes(p.x, G(p.x, p.z) + 1, p.z, nx, 0, nz, 16);
+          B = hit.box && hit.box.tag === 'building' && hit.dist > 1.2 ? houseAt(p.x + nx * (hit.dist + 0.3), p.z + nz * (hit.dist + 0.3)) : null;
+          // the front of a house has its own garden wall (or none): only sides and backs
+          if (!B || B.front.nx * -nx + B.front.nz * -nz > 0.7) ok = false;
+        }
+        if (ok && run && run.B !== B && run.B.modern !== B.modern) flush();
+        if (ok) { if (!run) run = { B, pts: [] }; run.pts.push([p.x, p.z]); } else flush();
+      }
+      flush();
+    }
+  }
+}
+
+// Close-board garden fence (1.8 m panels between concrete posts on a gravel
+// board), following the ground.
+function fenceRun(batch, M, world, x0, z0, x1, z1) {
+  const L = Math.hypot(x1 - x0, z1 - z0); if (L < 0.3) return;
+  noteBound(x0, z0, x1, z1);
+  const n = Math.max(1, Math.round(L / 1.83));
+  for (let k = 0; k < n; k++) {
+    const ax = x0 + (x1 - x0) * k / n, az = z0 + (z1 - z0) * k / n, bx = x0 + (x1 - x0) * (k + 1) / n, bz = z0 + (z1 - z0) * (k + 1) / n;
+    const ga = G(ax, az), gb = G(bx, bz);
+    batch.sloped(M.wood, ax, az, bx, bz, 0.04, ga + 0.14, gb + 0.14, ga + 1.8, gb + 1.8, { color: '#6e5238', tile: 1, detail: true });
+    batch.sloped(M.stone, ax, az, bx, bz, 0.05, ga - 0.2, gb - 0.2, ga + 0.15, gb + 0.15, { color: '#9d9a93', detail: true });
+    batch.box(M.stone, ax, ga + 0.85, az, 0.1, 2.1, 0.1, { color: '#a7a49c', detail: true });
+  }
+  batch.box(M.stone, x1, G(x1, z1) + 0.85, z1, 0.1, 2.1, 0.1, { color: '#a7a49c', detail: true });
+  const g = G((x0 + x1) / 2, (z0 + z1) / 2);
+  world.addOBB((x0 + x1) / 2, (z0 + z1) / 2, 0.05, L / 2, Math.atan2(x1 - x0, z1 - z0), g - 1, g + 1.8, 'fence');
+}
+
+// Rear gardens of the semis and detached houses: fenced at the back (up to
+// the pavement where the garden backs onto a road), down both sides and
+// between the pair, with a side gate.
+function rearGardens(B, batch, M, world, net) {
+  const F = B.F, P = B.plots;
+  let a0 = Infinity, a1 = -Infinity, dBack = Infinity;
+  for (const pl of P) { a0 = Math.min(a0, pl.a0); a1 = Math.max(a1, pl.a1); for (const [, d] of pl.piece) dBack = Math.min(dBack, d); }
+  const am = (a0 + a1) / 2, [bx, bz] = F.toW(am, dBack - 0.05), g = G(bx, bz);
+  const hit = world.raycastBoxes(bx, g + 1, bz, -F.nx, 0, -F.nz, 30);
+  let room = hit.box && hit.box.tag === 'building' ? hit.dist / 2 : hit.dist - 0.3;          // halfway to the house behind
+  const rr = net.nearest(bx - F.nx * 4, bz - F.nz * 4, null, (q) => q.kind !== 'f');
+  if (rr) { const edge = Math.hypot(bx - rr.px, bz - rr.pz) - rr.road.half - rr.road.pave; if (edge < room + 0.2) room = Math.max(0, edge - 0.3); }
+  const depth = Math.min(14, room);
+  if (depth < 2.5) return;
+  // side room: stop at the next building or road either side
+  const side = (dir) => {
+    const [sx, sz] = F.toW(dir > 0 ? a1 : a0, dBack - depth / 2);
+    const h = world.raycastBoxes(sx, G(sx, sz) + 1, sz, F.tx * dir, 0, F.tz * dir, 6);
+    let r = h.box && h.box.tag === 'building' ? h.dist / 2 : 1.4;
+    const rs = net.nearest(sx + F.tx * dir * 2, sz + F.tz * dir * 2, null, (q) => q.kind !== 'f');
+    if (rs) { const e = Math.hypot(sx - rs.px, sz - rs.pz) - rs.road.half - rs.road.pave; if (e < r) r = Math.max(0.2, e - 0.2); }
+    return Math.min(1.4, r);
+  };
+  const s0 = a0 - side(-1), s1 = a1 + side(1), dEnd = dBack - depth;
+  const W = (a, d) => F.toW(a, d);
+  fenceRun(batch, M, world, ...W(s0, dEnd), ...W(s1, dEnd));
+  fenceRun(batch, M, world, ...W(s0, dBack + 0.6), ...W(s0, dEnd));
+  fenceRun(batch, M, world, ...W(s1, dBack + 0.6), ...W(s1, dEnd));
+  for (let i = 1; i < P.length; i++) fenceRun(batch, M, world, ...W(P[i].a0, dBack - 0.05), ...W(P[i].a0, dEnd));
+  // side returns to the house corners, each with a gate (gap)
+  if (a0 - s0 > 0.9) fenceRun(batch, M, world, ...W(s0, dBack + 0.6), ...W(a0 - 0.05, dBack + 0.6));
+  if (s1 - a1 > 0.9) fenceRun(batch, M, world, ...W(a1 + 0.05, dBack + 0.6), ...W(s1, dBack + 0.6));
+}
+
+// Street-facing wall of a big (non-house) building within reach of a shop point.
+function bigWallNear(list, net, x, z) {
+  let best = null, bd = 18;
+  for (const B of list) {
+    if (B.type !== 'big' || !B.P || Math.hypot(B.o.cx - x, B.o.cz - z) > B.o.hu + 20) continue;
+    const P = B.P, s = B.ccw ? 1 : -1;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 4) continue;
+      const ex = (b[0] - a[0]) / L, ez = (b[1] - a[1]) / L, n = [ez * s, -ex * s];
+      const t = Math.max(0, Math.min(L, (x - a[0]) * ex + (z - a[1]) * ez)), px = a[0] + ex * t, pz = a[1] + ez * t;
+      const r = net.nearestStreet(px + n[0] * 3, pz + n[1] * 3);
+      const toStreet = r ? Math.max(0, r.dist - r.road.half - r.road.pave) : 40;
+      if (toStreet > 14) continue;                                                  // only walls that face a street
+      const d = Math.hypot(px - x, pz - z) + toStreet * 0.5;
+      if (d < bd) { bd = d; best = { a, b, n, L, key: B.i + ':' + i }; }
+    }
+  }
+  return best;
+}
+
+// Petrol station forecourt: canopy on four columns, two pump islands, a
+// kiosk, price sign (unbranded).
+function petrolStation(batch, M, world, net, x, z) {
+  const r = net.nearestStreet(x, z); if (!r) return;
+  const ry = Math.atan2(r.tx, r.tz), g = G(x, z);
+  const f = new Frame(batch, x, z, ry, g);
+  f.box(M.pave, 0, -0.1, 0, 12, 0.3, 18, { color: '#8d8d8a' });                                         // forecourt
+  for (const [cx, cz] of [[-4.2, -6], [4.2, -6], [-4.2, 6], [4.2, 6]]) f.box(M.metal, cx, 2.6, cz, 0.35, 5.2, 0.35, { color: '#e8e8e8' });
+  f.box(M.metal, 0, 5.4, 0, 11, 0.7, 16, { color: '#f4f4f2' });                                          // canopy
+  f.box(M.plastic, 0, 5.4, 0, 11.06, 0.3, 16.06, { color: '#1f7a4a' });                                  // canopy band
+  f.box(M.lampHead, 0, 5.03, 0, 9, 0.04, 14, { color: '#ffffff', detail: true });
+  for (const cz of [-4, 4]) {
+    f.box(M.stone, 0, 0.1, cz, 1.2, 0.2, 6, { color: '#c9c4b8' });                                      // island
+    for (const pz of [-1.5, 1.5]) {
+      f.box(M.metal, 0, 0.95, cz + pz, 0.5, 1.7, 0.9, { color: '#e4e6e8' });                             // pump
+      f.box(M.plastic, 0, 1.3, cz + pz, 0.52, 0.5, 0.6, { color: '#1b1b1b' });                           // screen panel
+      f.box(M.plastic, 0, 1.78, cz + pz, 0.54, 0.16, 0.92, { color: '#1f7a4a' });
+    }
+    world.addOBB(...f.world(0, cz), 0.6, 3, ry, g - 1, g + 1.8, 'pump');
+  }
+  // kiosk behind, price totem at the kerb
+  f.box(M.render, -9, 1.6, 0, 6, 3.2, 10, { color: '#e9e6df' });
+  f.box(M.glass, -5.95, 1.4, 0, 0.06, 2.2, 6, { color: '#ffffff' });
+  f.box(M.plastic, -9, 3.35, 0, 6.1, 0.3, 10.1, { color: '#1f7a4a' });
+  world.addOBB(...f.world(-9, 0), 3, 5, ry, g - 1, g + 3.2, 'building');
+  f.box(M.metal, 7, 1.6, -8, 0.3, 3.2, 1.6, { color: '#f4f4f2' });
+  f.box(M.plastic, 7.16, 2.3, -8, 0.02, 1.4, 1.3, { color: '#111' });
+  for (const [k, c] of ['#f2c30f', '#3fbf4a'].entries()) f.box(M.plastic, 7.17, 2.75 - k * 0.5, -8, 0.02, 0.3, 1.1, { color: c });  // unleaded / diesel price lines
+  for (const [cx, cz] of [[-4.2, -6], [4.2, -6], [-4.2, 6], [4.2, 6]]) { const [wx, wz] = f.world(cx, cz); world.addBox(wx - 0.2, wx + 0.2, g - 1, g + 5, wz - 0.2, wz + 0.2, 'pole'); }
+}
+
+// Shopfront on a wall (Frame: +Z out of the wall, X along it, y0 = pavement):
+// frame, display window, door, stall riser, fascia sign, shutter box, extras.
+function shopFront(f, W, S, M, signs, R, D = 0) {
+  const cell = signs.cell(S.cell);
+  f.box(M.darkMetal, 0, 1.4, D + 0.05, W - 0.3, 3.6, 0.12, { color: '#2a2a2a' });                 // (reaches below the pavement on slopes)
+  const dv = DISPLAY[S.miniMart ? 'miniMart' : S.cat] ?? 0, du = (dv % 4) * 0.25, dvv = dv < 4 ? 0.5 : 0;
+  f.geo(M.display, atlasQuad(W - 1.8, 2.2, du, dvv, du + 0.25, dvv + 0.5), 0.55, 1.6, D + 0.13);
+  f.box(M.glass, -W / 2 + 0.75, 1.25, D + 0.1, 0.95, 2.3, 0.06, { color: '#ffffff' });
+  f.box(M.stone, 0, -0.03, D + 0.12, W - 0.3, 0.96, 0.14, { color: '#3a3a3a' });
+  f.geo(M.sign, atlasBox(W - 0.2, 0.85, 0.2, cell.u0, cell.v0, cell.u1, cell.v1), 0, 3.6, D + 0.2);
+  f.box(M.metal, 0, 3.1, D + 0.2, W - 0.4, 0.22, 0.25, { color: '#9aa0a3', detail: true });
+  if (S.cat === 'tolet' || R() < 0.1) f.box(M.metal, 0.55, 2.45, D + 0.16, W - 1.8, 1.1, 0.04, { color: '#8e9497' });
+  if (S.awning) for (let i = 0; i < 6; i++) f.box(M.fabric, -W / 2 + 0.35 + (i + 0.5) * (W - 0.7) / 6, 2.9, D + 0.95, (W - 0.7) / 6, 0.05, 1.6, { color: i % 2 ? '#f2efe6' : S.awning, rx: 0.32, detail: true });
+  if (S.stall) for (let i = 0; i < Math.floor((W - 1.6) / 0.95); i++) {
+    const x = -W / 2 + 1.6 + i * 0.95;
+    f.box(M.wood, x, 0.35, D + 0.9, 0.85, 0.7, 0.6, { color: '#8a6a44', detail: true });
+    f.box(M.fruit, x, 0.78, D + 0.9, 0.78, 0.18, 0.52, { color: ['#e35d1a', '#4caf50', '#f4d03f', '#c0392b', '#7d3c98'][(R() * 5) | 0], detail: true });
+  }
+  if (S.aboard) f.box(M.wood, W / 2 - 0.8, 0.5, D + 1.4, 0.6, 0.95, 0.12, { color: '#222', rx: 0.12, detail: true });
+  if (S.cat === 'pharmacy') { f.box(M.signalLens, W / 2 - 0.3, 4.1, D + 0.45, 0.1, 0.7, 0.7, { color: '#19c24a' }); }
 }
 
 // ------------------------------------------------------------------ big buildings

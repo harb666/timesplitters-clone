@@ -1,5 +1,6 @@
 // Small 2-D polygon helpers for footprints (points are [x, z] arrays).
 import * as THREE from 'three';
+import { CHUNK } from '../../models/builders.js';
 
 export function area(P) { let a = 0; for (let i = 0, j = P.length - 1; i < P.length; j = i++) a += P[j][0] * P[i][1] - P[i][0] * P[j][1]; return a / 2; }
 export function centroid(P) { let x = 0, z = 0; for (const p of P) { x += p[0]; z += p[1]; } return [x / P.length, z / P.length]; }
@@ -66,10 +67,14 @@ export function triangulate(P) {
 // flushed into the StaticBatch as one geometry each.
 export class Mesher {
   constructor() { this.m = new Map(); }
-  _g(mat, color) { const k = mat.uuid + color; let g = this.m.get(k); if (!g) { g = { mat, color, pos: [], uv: [], idx: [] }; this.m.set(k, g); } return g; }
+  // geometry is grouped per material + tint + map chunk, so distance culling works
+  _g(mat, color, v) {
+    const cx = Math.floor(v[0] / CHUNK), cz = Math.floor(v[2] / CHUNK), k = mat.uuid + color + cx + ',' + cz;
+    let g = this.m.get(k); if (!g) { g = { mat, color, cx, cz, pos: [], uv: [], idx: [] }; this.m.set(k, g); } return g;
+  }
   // vertices [[x,y,z]...] with uvs [[u,v]...]; `n` = wanted facing (vec3-ish) or null
   poly(mat, color, V, UV, n = null) {
-    const g = this._g(mat, color), base = g.pos.length / 3;
+    const g = this._g(mat, color, V[0]), base = g.pos.length / 3;
     for (let i = 0; i < V.length; i++) { g.pos.push(V[i][0], V[i][1], V[i][2]); g.uv.push(UV[i][0], UV[i][1]); }
     let flip = false;
     if (n) {
@@ -81,7 +86,7 @@ export class Mesher {
     for (let i = 1; i < V.length - 1; i++) flip ? g.idx.push(base, base + i + 1, base + i) : g.idx.push(base, base + i, base + i + 1);
   }
   tris(mat, color, V, UV, T, up = true) {
-    const g = this._g(mat, color), base = g.pos.length / 3;
+    const g = this._g(mat, color, V[0]), base = g.pos.length / 3;
     for (let i = 0; i < V.length; i++) { g.pos.push(V[i][0], V[i][1], V[i][2]); g.uv.push(UV[i][0], UV[i][1]); }
     for (const [a, b, c] of T) {
       const A = V[a], B = V[b], C = V[c];
@@ -96,7 +101,7 @@ export class Mesher {
       geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
       geo.setIndex(g.idx); geo.computeVertexNormals();
-      batch.add(g.mat, geo, { color: g.color, detail });
+      batch.add(g.mat, geo, { color: g.color, detail, chunk: [g.cx, g.cz] });
     }
     this.m.clear();
   }

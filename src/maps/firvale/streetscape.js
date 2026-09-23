@@ -144,6 +144,41 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
       }
     }
   }
+  // ---- telegraph poles with overhead phone lines (terraced streets) ----
+  const wire = (x0, y0, z0, x1, y1, z1, sag) => {
+    const n = 4;
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = (k + 1) / n;
+      const p0 = [x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0 - sag * 4 * t0 * (1 - t0), z0 + (z1 - z0) * t0];
+      const p1 = [x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1 - sag * 4 * t1 * (1 - t1), z0 + (z1 - z0) * t1];
+      const dx = p1[0] - p0[0], dy = p1[1] - p0[1], dz = p1[2] - p0[2], L = Math.hypot(dx, dy, dz);
+      const g = new THREE.BoxGeometry(0.018, 0.018, L);
+      g.rotateX(-Math.asin(dy / L)); g.rotateY(Math.atan2(dx, dz));
+      batch.add(M.darkMetal, g, { x: (p0[0] + p1[0]) / 2, y: (p0[1] + p1[1]) / 2, z: (p0[2] + p1[2]) / 2, color: '#151515', detail: true });
+    }
+  };
+  for (const r of net.roads) {
+    if (r.kind !== 'r' || r.length < 40 || R() < 0.25) continue;
+    const side = R() < 0.5 ? 1 : -1, poles = [];
+    for (let s = 12 + R() * 10; s < r.length - 8; s += 34 + R() * 10) {
+      const p = net.pointAt(r, s, side * (r.half + r.pave - 0.25), {});
+      if (net.onCarriageway(p.x, p.z, r, 1) || onBuilding(p.x, p.z)) continue;
+      const g = G(p.x, p.z), H = 8.5;
+      batch.add(M.wood, new THREE.CylinderGeometry(0.1, 0.14, H, 6), { x: p.x, y: g + H / 2, z: p.z, color: '#5c4630' });
+      batch.box(M.wood, p.x, g + H - 0.35, p.z, 0.9, 0.1, 0.1, { color: '#4d3a28', ry: Math.atan2(p.tx, p.tz) + Math.PI / 2, detail: true });
+      world.addBox(p.x - 0.14, p.x + 0.14, g - 1, g + H, p.z - 0.14, p.z + 0.14, 'pole');
+      poles.push({ x: p.x, y: g + H - 0.3, z: p.z, tx: p.tx, tz: p.tz });
+      // drop wires to a few house fronts on both sides
+      for (const dside of [side, -side]) if (R() < 0.7) {
+        const q = net.pointAt(r, s + (R() - 0.5) * 12, dside * (r.half + r.pave + 1.2), {});
+        wire(p.x, g + H - 0.4, p.z, q.x, G(q.x, q.z) + 5.6, q.z, 0.25);
+      }
+    }
+    for (let i = 0; i + 1 < poles.length; i++) {
+      const a = poles[i], b = poles[i + 1]; if (Math.hypot(a.x - b.x, a.z - b.z) > 60) continue;
+      for (const o of [-0.35, 0.35]) wire(a.x + a.tz * o, a.y, a.z - a.tx * o, b.x + b.tz * o, b.y, b.z - b.tx * o, 0.6);
+    }
+  }
   // ---- street name plates near each named street's ends ----
   const names = [...new Set(net.roads.filter((r) => DRIVABLE.has(r.kind)).map((r) => r.name).filter(Boolean))];
   const plates = nameAtlas(names);

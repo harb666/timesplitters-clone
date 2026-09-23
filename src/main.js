@@ -104,8 +104,8 @@ function boot() {
   game.cars = [];
   // one boy racer in his Falcon R, and everyday traffic: hatchbacks, SUVs,
   // saloons, estates, vans and a bus
-  const carSpecs = [['falcon', 0x1d5fd1, 3], ['hatch', null, 0], ['suv', null, 0], ['saloon', null, -1], ['van', null, -1], ['bus', null, -3], ['hatch', null, 1],
-    ['estate', null, 0], ['suv', null, -1], ['hatch', null, 0], ['van', null, -2], ['saloon', null, 0]].slice(0, settings.quality === 'low' ? 7 : 12);
+  const carSpecs = [['falcon', 0x1d5fd1, 3], ['taxi', null, 0], ['suv', null, 0], ['mini', null, -1], ['van', null, -1], ['bus', null, -3], ['hatch', null, 1],
+    ['taxi', null, 0], ['estate', null, -1], ['mini', null, 0], ['saloon', null, -2], ['suv', null, 0]].slice(0, settings.quality === 'low' ? 7 : 12);
   carSpecs.forEach(([type, paint, bias], i) => game.cars.push(new Car(scene, world, { net: map.net, type, paint, plate: 'FV24 ZAP', speedBias: bias, hud, start: (i * 0.37) % 1, others: game.cars, focus: player.pos, audible: i < 5 })));
   scene.traverse((o) => { if (o.isMesh && !o.castShadow && o.geometry && o.material && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
 

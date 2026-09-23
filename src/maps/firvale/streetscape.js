@@ -4,7 +4,7 @@ import { groundHeight as G } from '../../core/world.js';
 import { Frame, rng } from './buildings.js';
 import { boxUV } from '../../models/shapes.js';
 import { DRIVABLE } from './roads.js';
-import { addParkedVehicle, pickType, PAINT_UK } from '../../models/vehicles.js';
+import { addParkedVehicle, pickType, pickPaint } from '../../models/vehicles.js';
 
 // Street-name plate texture (Sheffield style: black on white, district
 // underneath). One atlas for every named road.
@@ -288,11 +288,10 @@ export function plantTrees(batch, M, world, list, cheap = false) {
 // Everyday cars and vans parked along the terraced streets: the detailed
 // models (see models/vehicles.js) close up, plus a simple two-box proxy
 // (just inside the detailed body) that stays visible further away.
-const PAINT = PAINT_UK;
 let FLEET = null;
 export function setFleet(f) { FLEET = f; }
 export function parkedCar(batch, M, x, z, ry, R, type = pickType(R)) {
-  const paint = PAINT[(R() * PAINT.length) | 0], g = G(x, z);
+  const paint = pickPaint(type, R), g = G(x, z);
   const dims = FLEET ? FLEET.add(x, g, z, ry, type, paint) : addParkedVehicle(batch, x, g, z, ry, type, { paint, plate: (R() * 16) | 0, alloy: (R() * 4) | 0 }, true);
   const f = new Frame(batch, x, z, ry, g);
   const L = dims.L * 0.95, Wd = dims.W * 0.94, van = type === 'van';

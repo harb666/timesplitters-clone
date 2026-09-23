@@ -27,9 +27,9 @@ const J = { hip: 0.93, knee: 0.5, shoulderY: 1.42, shoulderX: 0.19, elbowY: 1.14
 function part(geo, p, slot, opt = 0) {
   geo = geo.index ? geo.toNonIndexed() : geo;
   const n = geo.attributes.position.count;
-  geo.setAttribute('part', new THREE.Float32BufferAttribute(new Float32Array(n).fill(p), 1));
-  geo.setAttribute('slot', new THREE.Float32BufferAttribute(new Float32Array(n).fill(slot), 1));
-  geo.setAttribute('opt', new THREE.Float32BufferAttribute(new Float32Array(n).fill(opt), 1));
+  const pso = new Float32Array(n * 3); for (let i = 0; i < n; i++) { pso[i * 3] = p; pso[i * 3 + 1] = slot; pso[i * 3 + 2] = opt; }
+  geo.setAttribute('pso', new THREE.Float32BufferAttribute(pso, 3));      // part, colour slot, optional piece
+  geo.setAttribute('fuv', slot === 7 ? geo.attributes.uv : new THREE.Float32BufferAttribute(new Float32Array(n * 2), 2));
   geo.deleteAttribute('uv');
   return geo;
 }
@@ -49,26 +49,28 @@ function buildTemplate() {
   P.push(part(coat, 1, 5, 6));
   // neck + head
   P.push(part(T(new THREE.CylinderGeometry(0.05, 0.055, 0.1, 6, 1, true), 0, 1.53, 0), 2, 0));
-  const head = new THREE.SphereGeometry(0.105, 10, 8); head.scale(0.92, 1.12, 1.0); T(head, 0, 1.66, 0.01);
+  const head = new THREE.SphereGeometry(0.105, 14, 11); head.scale(0.92, 1.12, 1.0); T(head, 0, 1.66, 0.01);
   P.push(part(head, 2, 0));
-  P.push(part(T(new THREE.BoxGeometry(0.03, 0.045, 0.04), 0, 1.655, 0.115), 2, 0));                 // nose
-  for (const sx of [-1, 1]) P.push(part(T(new THREE.SphereGeometry(0.014, 4, 3), sx * 0.037, 1.685, 0.094), 2, 6)); // eyes
-  P.push(part(T(new THREE.BoxGeometry(0.045, 0.008, 0.01), 0, 1.615, 0.1), 2, 6));                     // mouth line
+  // painted face: a patch just proud of the front of the head, UV-mapped to the face atlas
+  const face = new THREE.SphereGeometry(0.1062, 10, 8, Math.PI / 2 - 0.95, 1.9, 0.62, 1.55); face.scale(0.92, 1.12, 1.0); T(face, 0, 1.66, 0.01);
+  P.push(part(face, 2, 7));
+  const nose = new THREE.ConeGeometry(0.016, 0.042, 5); nose.rotateX(-1.25); nose.scale(1, 1, 0.9);
+  P.push(part(T(nose, 0, 1.652, 0.118), 2, 0));                                                         // nose
   for (const sx of [-1, 1]) P.push(part(T(new THREE.SphereGeometry(0.022, 4, 3).scale(0.5, 1, 1), sx * 0.098, 1.66, 0.0), 2, 0)); // ears
   // hair: short crop, long hair, headscarf, cap, beard, hood
-  const crop = new THREE.SphereGeometry(0.112, 9, 4, 0, Math.PI * 2, 0, Math.PI * 0.52); crop.scale(0.94, 1.08, 1.02); T(crop, 0, 1.675, -0.005);
+  const crop = new THREE.SphereGeometry(0.112, 14, 6, 0, Math.PI * 2, 0, Math.PI * 0.52); crop.scale(0.94, 1.08, 1.02); T(crop, 0, 1.675, -0.005);
   P.push(part(crop, 2, 1, 9));
-  const longHair = new THREE.SphereGeometry(0.118, 9, 5, 0, Math.PI * 2, 0, Math.PI * 0.6); longHair.scale(0.97, 1.1, 1.05); T(longHair, 0, 1.67, -0.012);
+  const longHair = new THREE.SphereGeometry(0.118, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.6); longHair.scale(0.97, 1.1, 1.05); T(longHair, 0, 1.67, -0.012);
   P.push(part(longHair, 2, 1, 1));
   P.push(part(T(new THREE.BoxGeometry(0.2, 0.3, 0.06), 0, 1.5, -0.075), 2, 1, 1));                    // hair down the back
-  const scarf = new THREE.SphereGeometry(0.128, 9, 7); scarf.scale(0.96, 1.12, 0.92); T(scarf, 0, 1.655, -0.05);
+  const scarf = new THREE.SphereGeometry(0.128, 14, 10); scarf.scale(0.96, 1.12, 0.92); T(scarf, 0, 1.655, -0.05);
   P.push(part(scarf, 2, 5, 2));
   P.push(part(T(lathe([[0.0, 1.38], [0.2, 1.4], [0.13, 1.5], [0.06, 1.58], [0.0, 1.58]], 10).scale(1, 1, 0.8), 0, 0, -0.01), 1, 5, 2)); // drape over shoulders
   const cap = new THREE.SphereGeometry(0.116, 9, 3, 0, Math.PI * 2, 0, Math.PI * 0.42); T(cap, 0, 1.69, 0);
   P.push(part(cap, 2, 5, 3)); P.push(part(T(new THREE.BoxGeometry(0.16, 0.012, 0.1), 0, 1.72, 0.12), 2, 5, 3));
-  const beard = new THREE.SphereGeometry(0.1, 8, 3, 0, Math.PI * 2, Math.PI * 0.45, Math.PI * 0.4); beard.scale(0.95, 1.1, 1.05); T(beard, 0, 1.655, 0.02);
+  const beard = new THREE.SphereGeometry(0.1, 12, 5, 0, Math.PI * 2, Math.PI * 0.45, Math.PI * 0.4); beard.scale(0.95, 1.1, 1.05); T(beard, 0, 1.655, 0.02);
   P.push(part(beard, 2, 1, 5));
-  const hood = new THREE.SphereGeometry(0.13, 9, 5, 0, Math.PI * 2, 0, Math.PI * 0.62); hood.scale(1, 1.1, 1.05); T(hood, 0, 1.66, -0.03);
+  const hood = new THREE.SphereGeometry(0.13, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.62); hood.scale(1, 1.1, 1.05); T(hood, 0, 1.66, -0.03);
   P.push(part(hood, 2, 2, 11));
   // arms (upper: top colour, forearm: top colour sleeve + skin hand)
   for (const sx of [-1, 1]) {
@@ -100,7 +102,7 @@ function buildTemplate() {
 function mergeParts(list) {
   let n = 0; for (const g of list) n += g.attributes.position.count;
   const out = new THREE.BufferGeometry();
-  for (const [name, size] of [['position', 3], ['normal', 3], ['part', 1], ['slot', 1], ['opt', 1]]) {
+  for (const [name, size] of [['position', 3], ['normal', 3], ['pso', 3], ['fuv', 2]]) {
     const a = new Float32Array(n * size); let o = 0;
     for (const g of list) { a.set(g.attributes[name].array, o); o += g.attributes[name].array.length; }
     out.setAttribute(name, new THREE.BufferAttribute(a, size));
@@ -109,7 +111,8 @@ function mergeParts(list) {
 }
 
 const VERT_HEAD = /* glsl */`
-attribute float part; attribute float slot; attribute float opt;
+attribute vec3 pso; attribute vec2 fuv;
+varying vec2 vFaceUv; varying float vFace;
 attribute vec4 iA; attribute vec4 iB; attribute vec4 iC; attribute vec4 iD; attribute vec4 iE; attribute vec4 iF;
 varying vec3 vSlotCol;
 vec3 skP;
@@ -121,6 +124,7 @@ const VERT_BODY = /* glsl */`
   vec3 objectNormal = vec3(normal);
   skP = position;
   {
+    float part = pso.x, slot = pso.y, opt = pso.z;
     float ph = iA.w, gait = iB.w, pose = iC.w, gest = iE.w, look = iF.w;
     int flags = int(iD.w + 0.5);
     int o = int(opt + 0.5);
@@ -166,7 +170,9 @@ const VERT_BODY = /* glsl */`
     skP.y += drop + abs(cos(ph)) * 0.022 * min(gait, 1.0) * (pose < 0.5 ? 1.0 : 0.0);
     vec3 cols[7];
     cols[0] = iA.rgb; cols[1] = iB.rgb; cols[2] = iC.rgb; cols[3] = iD.rgb; cols[4] = iE.rgb; cols[5] = iF.rgb; cols[6] = vec3(0.02, 0.018, 0.016);
-    vSlotCol = cols[int(slot + 0.5)];
+    vSlotCol = cols[int(min(slot, 6.0) + 0.5)];
+    vFaceUv = fuv; vFace = slot > 6.5 ? 1.0 + float((flags >> 20) & 7) : 0.0;
+    if (slot > 6.5) vSlotCol = iA.rgb;
   }
 `;
 
@@ -248,6 +254,49 @@ const WHEEL_LINES = [
   '"Dez reckons he\'s the fastest thing on four wheels round here. He\'s never met me on the hill down to Owler Lane."',
   '"Dropped kerb? Where? Ah, I see it. Behind the wheelie bin. Behind the other wheelie bin."',
 ];
+
+// Six painted faces (young man / woman, two more of each, older man / woman):
+// eyes with whites, irises and lids, brows, nose shading, lips. Drawn with
+// alpha over the skin colour, so they suit every skin tone.
+let FACES = null;
+function faceAtlas() {
+  if (FACES) return FACES;
+  const W = 256, c = document.createElement('canvas'); c.width = W * 6; c.height = W; const g = c.getContext('2d');
+  for (let f = 0; f < 6; f++) {
+    const ox = f * W, female = f === 1 || f === 3 || f === 5, old = f >= 4;
+    const ex = 0.215, ey = 0.47, cx = ox + W / 2;
+    // soft shading: eye sockets, nose sides, under the lip, cheek blush
+    const shade = (x, y, rx, ry, a, col = '0,0,0') => { const gr = g.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry)); gr.addColorStop(0, `rgba(${col},${a})`); gr.addColorStop(1, `rgba(${col},0)`); g.save(); g.translate(x, y); g.scale(rx / Math.max(rx, ry), ry / Math.max(rx, ry)); g.translate(-x, -y); g.fillStyle = gr; g.beginPath(); g.arc(x, y, Math.max(rx, ry), 0, 7); g.fill(); g.restore(); };
+    for (const sx of [-1, 1]) shade(cx + sx * ex * W, ey * W - 2, 30, 20, 0.22);
+    shade(cx, 0.62 * W, 14, 30, 0.12); shade(cx, 0.73 * W, 18, 8, 0.18);
+    if (female) for (const sx of [-1, 1]) shade(cx + sx * 0.25 * W, 0.66 * W, 26, 16, 0.12, '190,60,60');
+    for (const sx of [-1, 1]) {
+      const x = cx + sx * ex * W, y = ey * W;
+      // white, iris, pupil, highlight
+      g.fillStyle = '#f2ede6'; g.beginPath(); g.ellipse(x, y, 17, 8.5, 0, 0, 7); g.fill();
+      g.fillStyle = ['#3b2616', '#2a1a10', '#4a3420', '#3e5a6a', '#2f2418', '#3b2616'][f]; g.beginPath(); g.arc(x + sx * 1, y + 0.5, 7.5, 0, 7); g.fill();
+      g.fillStyle = '#0a0706'; g.beginPath(); g.arc(x + sx * 1, y + 0.5, 3.5, 0, 7); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.8)'; g.beginPath(); g.arc(x + sx * 1 - 2.5, y - 2.5, 1.8, 0, 7); g.fill();
+      // upper lid / lashes
+      g.strokeStyle = 'rgba(20,12,8,.9)'; g.lineWidth = female ? 4 : 3; g.beginPath(); g.ellipse(x, y + 2, 18, 10, 0, Math.PI * 1.05, Math.PI * 1.95); g.stroke();
+      // brow
+      g.strokeStyle = old ? 'rgba(140,130,120,.8)' : 'rgba(25,16,10,.9)'; g.lineWidth = female ? 4.5 : 7; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(x - sx * 17, y - 18); g.quadraticCurveTo(x, y - (female ? 29 : 25), x + sx * 20, y - 17); g.stroke();
+      if (old) { g.strokeStyle = 'rgba(0,0,0,.15)'; g.lineWidth = 1.5; for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(x + sx * 20, y + k * 4 - 2); g.lineTo(x + sx * 28, y + k * 5 - 4); g.stroke(); } }
+    }
+    // nostrils + nose tip highlight
+    g.fillStyle = 'rgba(30,15,10,.45)'; for (const sx of [-1, 1]) { g.beginPath(); g.ellipse(cx + sx * 8, 0.655 * W, 4.5, 2.6, 0, 0, 7); g.fill(); }
+    shade(cx, 0.6 * W, 7, 10, 0.1, '255,255,255');
+    // lips
+    const ly = 0.735 * W;
+    g.fillStyle = female ? 'rgba(150,50,55,.55)' : 'rgba(110,55,45,.4)';
+    g.beginPath(); g.moveTo(cx - 26, ly); g.quadraticCurveTo(cx - 10, ly - 9, cx, ly - 5); g.quadraticCurveTo(cx + 10, ly - 9, cx + 26, ly); g.quadraticCurveTo(cx, ly + 13, cx - 26, ly); g.fill();
+    g.strokeStyle = 'rgba(40,15,12,.7)'; g.lineWidth = 2.2; g.beginPath(); g.moveTo(cx - 25, ly); g.quadraticCurveTo(cx, ly + 3, cx + 25, ly); g.stroke();
+    if (old) { g.strokeStyle = 'rgba(0,0,0,.14)'; g.lineWidth = 2; for (const sx of [-1, 1]) { g.beginPath(); g.moveTo(cx + sx * 20, 0.62 * W); g.quadraticCurveTo(cx + sx * 34, 0.7 * W, cx + sx * 30, 0.78 * W); g.stroke(); } }
+  }
+  FACES = new THREE.CanvasTexture(c); FACES.colorSpace = THREE.SRGBColorSpace; FACES.anisotropy = 4;
+  return FACES;
+}
 
 class Person {
   constructor(o) { Object.assign(this, o); this.phase = Math.random() * 10; this.greetT = 0; this.fear = 0; this.cower = 0; this.yawS = this.yaw; this.talk = 0; }
@@ -335,6 +384,8 @@ export class Crowd {
     if (!female && R() < 0.12) set(11);
     if (homeless) { flags &= ~(1 << 7); flags &= ~(1 << 10); set(8); if (R() < 0.6) set(11); set(6); top = pick(['#3f3f46', '#57534e', '#1e3a8a', '#14532d', '#44403c'], R); accent = pick(['#1e3a8a', '#7f1d1d', '#14532d', '#78716c'], R); if (R() < 0.6) set(5); }
     const name = pick(NAMES[grp], R);
+    const faceIdx = elder ? 4 + (R() < 0.5 ? 1 : 0) : female ? (R() < 0.5 ? 1 : 3) : (R() < 0.5 ? 0 : 2);
+    flags |= faceIdx << 20;
     return { grp, female, child, elder, flags, skin, hair, top, bottom, shoes: pick(SHOES, R), accent, name, scale: child ? 0.6 + R() * 0.12 : (female ? 0.93 : 1.0) * (0.95 + R() * 0.09), homeless, wheel,
       pose: homeless ? 2 : wheel ? 1 : 0 };
   }
@@ -353,7 +404,7 @@ export class Crowd {
   buildMeshes() {
     const geo = buildTemplate(), N = this.people.length;
     const ig = new THREE.BufferGeometry();
-    for (const k of ['position', 'normal', 'part', 'slot', 'opt']) ig.setAttribute(k, geo.attributes[k]);
+    for (const k of ['position', 'normal', 'pso', 'fuv']) ig.setAttribute(k, geo.attributes[k]);
     this.attrs = {};
     for (const k of ['iA', 'iB', 'iC', 'iD', 'iE', 'iF']) { const a = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4); a.setUsage(THREE.DynamicDrawUsage); ig.setAttribute(k, a); this.attrs[k] = a; }
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0 });
@@ -361,10 +412,12 @@ export class Crowd {
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_HEAD)
         .replace('#include <beginnormal_vertex>', VERT_BODY)
         .replace('#include <begin_vertex>', 'vec3 transformed = skP;');
-      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSlotCol;')
-        .replace('#include <color_fragment>', 'diffuseColor.rgb = vSlotCol;');
+      sh.uniforms.faceMap = { value: faceAtlas() };
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSlotCol; varying vec2 vFaceUv; varying float vFace; uniform sampler2D faceMap;')
+        .replace('#include <color_fragment>', `diffuseColor.rgb = vSlotCol;
+          if (vFace > 0.5) { vec4 t = texture2D(faceMap, vec2((clamp(vFaceUv.x, 0.0, 1.0) + floor(vFace - 0.5)) / 6.0, vFaceUv.y)); diffuseColor.rgb = mix(vSlotCol, t.rgb, t.a); }`);
     };
-    mat.customProgramCacheKey = () => 'crowd-v1';
+    mat.customProgramCacheKey = () => 'crowd-v2';
     this.mesh = new THREE.InstancedMesh(ig, mat, N);
     this.mesh.frustumCulled = false; this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.scene.add(this.mesh);

@@ -9,6 +9,7 @@ let volume = 0.8;
 export function audioReady() { return !!ctx; }
 export function getCtx() { return ctx; }
 export function getSfxBus() { return sfxBus; }
+export function getMaster() { return master; }
 export function getReverbSend() { return reverbSend; }
 export function getNoise() { return noiseBuf; }
 

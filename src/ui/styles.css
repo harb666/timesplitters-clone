@@ -111,6 +111,10 @@ button.round.big { width: 92px; height: 92px; font-size: 15px; background: rgba(
 #btn-reload { right: 112px; bottom: 76px; }
 #btn-switch { right: 60px; bottom: 124px; }
 #btn-use { right: 0; bottom: 124px; }
+#btn-aim { right: 120px; bottom: 148px; }
+button.round.on { background: rgba(47,211,197,.4); border-color: var(--accent-2); }
+body.ads #crosshair { opacity: 0; }
+#crosshair { transition: opacity .12s; }
 button.round.small { position: static; width: 38px; height: 38px; font-size: 18px; background: var(--panel); }
 #btn-settings { pointer-events: auto; }
 

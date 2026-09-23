@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Model viewer</title>
+<script type="importmap">{ "imports": { "three": "../src/lib/three.module.min.js" } }</script>
+<style>html,body{margin:0;background:#222;overflow:hidden}</style></head>
+<body><canvas id="c"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { weaponMaterials } from '../src/weapons/materials.js';
+import { makeEnvironment } from '../src/render/environment.js';
+const params = new URLSearchParams(location.search);
+const which = params.get('m') || 'ak';
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+renderer.setSize(innerWidth, innerHeight); renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x303236);
+scene.environment = makeEnvironment(renderer);
+const key = new THREE.DirectionalLight(0xffffff, 2.5); key.position.set(1, 2, 1.5); scene.add(key);
+const cam = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.01, 10);
+const M = weaponMaterials('high');
+let model;
+if (which === 'ak') model = (await import('../src/weapons/models/ak.js')).buildAK(M).root;
+if (which === 'rev') model = (await import('../src/weapons/models/revolver.js')).buildRevolver(M).root;
+if (which === 'hand') { const h = await import('../src/weapons/hands.js'); model = new THREE.Group(); const r = h.buildHand(M, false); h.poseHand(r, h.POSES[params.get('pose') || 'grip']); model.add(r.root); }
+scene.add(model);
+const box = new THREE.Box3().setFromObject(model); const c = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3()).length();
+const az = +(params.get('az') || 1.2), el = +(params.get('el') || 0.3), dist = +(params.get('d') || 1.2);
+cam.position.set(c.x + Math.sin(az) * Math.cos(el) * size * dist, c.y + Math.sin(el) * size * dist, c.z + Math.cos(az) * Math.cos(el) * size * dist);
+cam.lookAt(c);
+renderer.render(scene, cam);
+window.done = true;
+</script></body></html>

@@ -10,7 +10,9 @@
 // Coordinates are metres. +X = east, -Z = north (uphill), +Y = up.
 import * as THREE from 'three';
 import { groundHeight as G } from '../core/world.js';
-import { StaticBatch, lambert } from '../models/builders.js';
+import { StaticBatch, pbr } from '../models/builders.js';
+import * as PB from '../textures/pbr.js';
+import { boxUV } from '../models/shapes.js';
 import * as TX from '../textures/procedural.js';
 
 export const ROAD = { halfWidth: 5, pave: 3.5, zMin: -150, zMax: 150 };
@@ -24,30 +26,42 @@ function rng(seed) {
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 }
 
-export function buildFirVale(scene, world) {
+// What the ground is made of at (x, z) — drives footsteps, bullet impacts
+// and casing bounces.
+export function surfaceAt(x, z) {
+  const ax = Math.abs(x);
+  if (z > ROAD.zMin && z < ROAD.zMax) { if (ax < ROAD.halfWidth) return 'asphalt'; if (ax < ROAD.halfWidth + ROAD.pave) return 'paving'; }
+  if (x > 1 && x < 112 && z > -48.5 && z < -35.5) return Math.abs(z + 42) < 4 ? 'asphalt' : 'paving';     // Page Hall Rd
+  if (x < -1 && x > -112 && z > 44.2 && z < 55.8) return Math.abs(z - 50) < 3.6 ? 'asphalt' : 'paving';   // Owler Lane
+  if (x > 8.5 && x < 24 && z > 34 && z < 48) return 'asphalt';                                            // car park
+  if (x > 22.5 && x < 26 && z > -36 && z < 32) return 'asphalt';                                          // gennel
+  if (z > 4 && z < 8 && x > -30 && x < -8.7) return 'paving';                                             // rec path
+  return 'grass';
+}
+
+export function buildFirVale(scene, world, quality = 'medium') {
   const R = rng(1234);
   const batch = new StaticBatch();
 
   // ---------- materials (shared, few of them) ----------
-  const tex = {
-    brick: TX.brickTexture(1, [168, 92, 70]),
-    stone: TX.stoneTexture(),
-    pave: TX.pavementTexture(),
-    road: TX.asphaltTexture(),
-    grass: TX.grassTexture(),
-    win: [TX.houseWindowTexture(4), TX.houseWindowTexture(9), TX.houseWindowTexture(21)],
-  };
+  const tex = { win: [TX.houseWindowTexture(4), TX.houseWindowTexture(9), TX.houseWindowTexture(21)] };
+
+  const hq = quality !== 'low';
+  const n = hq ? 512 : 256;
   const M = {
-    color: lambert(),
-    brick: lambert({ map: tex.brick }),
-    stone: lambert({ map: tex.stone }),
-    pave: lambert({ map: tex.pave }),
-    road: lambert({ map: tex.road }),
-    grass: lambert({ map: tex.grass }),
-    roof: lambert({ flatShading: true }),
-    win: tex.win.map((t) => lambert({ map: t })),
-    leaves: lambert({ flatShading: true }),
+    color: pbr(null, { roughness: 0.8 }),
+    brick: pbr(PB.brickPBR(n), { normal: 1.2 }),
+    stone: pbr(PB.stonePBR(256), { normal: 1.2 }),
+    pave: pbr(PB.pavingPBR(256), { normal: 1.0 }),
+    road: pbr(PB.asphaltPBR(n), { normal: 0.8 }),
+    grass: pbr(PB.grassPBR(256), { normal: 0.8, env: 0.4 }),
+    roof: pbr(PB.slatePBR(256), { normal: 1.0 }),
+    // window glass: glossy so it reflects the sky and street
+    win: tex.win.map((t) => { const m = new THREE.MeshStandardMaterial({ map: t, roughness: 0.08, metalness: 0.1, envMapIntensity: 1.4, vertexColors: true }); return m; }),
+    leaves: pbr(null, { flatShading: true, roughness: 0.9 }),
+    metal: pbr(PB.gunSteel(256, { tint: [120, 124, 128], wear: 0.2, seed: 40 }), { metalness: 0.9, normal: 0.3 }),
   };
+
 
   const interactables = [];
   const props = [];      // spots for shootable props { type, x, y, z }
@@ -93,14 +107,13 @@ export function buildFirVale(scene, world) {
   // Local-to-world for objects rotated by 0/90/180/270 degrees.
   const toWorld = (cx, cz, ry, lx, lz) => [cx + lx * Math.cos(ry) + lz * Math.sin(ry), cz - lx * Math.sin(ry) + lz * Math.cos(ry)];
 
-  function roofPrism(cx, y, cz, width, depth, height, ry, color = '#4a4f57') {
-    let g = new THREE.CylinderGeometry(1, 1, 1, 3, 1).toNonIndexed();
+  function roofPrism(cx, y, cz, width, depth, height, ry, color = '#8a8f98') {
+    const g = new THREE.CylinderGeometry(1, 1, 1, 3, 1).toNonIndexed();
     g.rotateX(-Math.PI / 2); // triangle tip up, length along Z
     g.rotateY(Math.PI / 2);  // length along X (parallel to street front)
-    g.computeVertexNormals();
-    // base at local y=-0.5 after scaling height/1.5
     const sy = height / 1.5;
-    batch.add(M.roof, g, { x: cx, y: y + 0.5 * sy, z: cz, ry, sx: width, sy, sz: depth / 1.732, color });
+    g.scale(width, sy, depth / 1.732); g.rotateY(ry); g.translate(cx, y + 0.5 * sy, cz);
+    batch.add(M.roof, boxUV(g, 0.9), { color }); // world-scale UVs so slates are the right size
   }
 
   // ---------- terraced house ----------
@@ -111,7 +124,7 @@ export function buildFirVale(scene, world) {
     const mirror = opts.mirror ? -1 : 1;
     const P = (lx, lz) => toWorld(cx, cz, ry, lx, lz);
     // body (extends 2m below ground so hills never show gaps)
-    batch.box(M.brick, cx, g + (H - 2) / 2, cz, w, H + 2, d, { tile: 2, color: tint, ry });
+    batch.box(M.brick, cx, g + (H - 2) / 2, cz, w, H + 2, d, { tile: 1.3, color: tint, ry });
     // stone band + sills
     let [x, z] = P(0, d / 2 + 0.02);
     batch.box(M.color, x, g + 2.9, z, w, 0.18, 0.12, { color: '#d8d0bf', ry });
@@ -188,8 +201,8 @@ export function buildFirVale(scene, world) {
 
   // ---------- shop unit ----------
   const signMeshes = [];
-  function signMesh(texture, x, y, z, w, h, ry) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: texture }));
+  function signMesh(texture, x, y, z, w, h, ry, rough = 0.45) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: texture, roughness: rough, metalness: 0 }));
     m.position.set(x, y, z); m.rotation.y = ry;
     m.matrixAutoUpdate = false; m.updateMatrix();
     scene.add(m); signMeshes.push(m);
@@ -200,7 +213,7 @@ export function buildFirVale(scene, world) {
     const w = 10, d = 12, H = 7.2;
     const g = G(cx, cz) - 0.1;
     const P = (lx, lz) => toWorld(cx, cz, ry, lx, lz);
-    batch.box(M.brick, cx, g + (H - 2) / 2, cz, w, H + 2, d, { tile: 2, color: info.brick ?? '#f3dccf', ry });
+    batch.box(M.brick, cx, g + (H - 2) / 2, cz, w, H + 2, d, { tile: 1.3, color: info.brick ?? '#f3dccf', ry });
     // parapet cap
     batch.box(M.color, cx, g + H + 0.1, cz, w + 0.2, 0.25, d + 0.2, { color: '#8b8579', ry });
     // pilasters
@@ -213,7 +226,7 @@ export function buildFirVale(scene, world) {
     batch.box(M.color, x, g + 0.3, z, w - 0.6, 0.6, 0.12, { color: '#2b2b2b', ry });
     // window (glass with stock behind)
     [x, z] = P(1.2, d / 2 + 0.06);
-    signMesh(TX.shopWindowTexture(info.seed ?? 2), x, g + 1.9, z, 6.4, 2.4, ry);
+    signMesh(TX.shopWindowTexture(info.seed ?? 2), x, g + 1.9, z, 6.4, 2.4, ry, 0.06);
     // door
     [x, z] = P(-3.4, d / 2 + 0.06);
     batch.box(M.color, x, g + 1.35, z, 1.4, 2.5, 0.08, { color: info.door ?? '#1c2a33', ry });
@@ -249,7 +262,8 @@ export function buildFirVale(scene, world) {
       signMesh(TX.posterTexture(p[0], p[1], p[2]), x, g + 1.6, z, 0.7, 1.05, ry);
     });
     const sw = Math.abs(Math.sin(ry)) > 0.5;
-    world.addFootprint(cx, cz, sw ? d : w, sw ? w : d, H, 'building');
+    const fb = world.addFootprint(cx, cz, sw ? d : w, sw ? w : d, H, 'building');
+    fb.shop = true; // its road-facing wall has shop windows (glass impacts)
     return { x: P(0, d / 2 + 2)[0], z: P(0, d / 2 + 2)[1] };
   }
 
@@ -259,8 +273,8 @@ export function buildFirVale(scene, world) {
   // Main road: Barnsley Road (fictionalised)
   strip(M.road, -ROAD.halfWidth, ROAD.halfWidth, ROAD.zMin, ROAD.zMax, 0.0, 4, '#ffffff');
   const pw = ROAD.halfWidth + ROAD.pave;
-  strip(M.pave, ROAD.halfWidth, pw, ROAD.zMin, ROAD.zMax, 0.14, 2, '#ffffff');
-  strip(M.pave, -pw, -ROAD.halfWidth, ROAD.zMin, ROAD.zMax, 0.14, 2, '#ffffff');
+  strip(M.pave, ROAD.halfWidth, pw, ROAD.zMin, ROAD.zMax, 0.14, 1.8, '#ffffff');
+  strip(M.pave, -pw, -ROAD.halfWidth, ROAD.zMin, ROAD.zMax, 0.14, 1.8, '#ffffff');
   kerbZ(ROAD.halfWidth, ROAD.zMin, ROAD.zMax);
   kerbZ(-ROAD.halfWidth, ROAD.zMin, ROAD.zMax);
   // centre dashes
@@ -279,16 +293,16 @@ export function buildFirVale(scene, world) {
   // Side street east: "Page Hall Road" (fictionalised)
   const PH = { z: -42, half: 4, pave: 2.5, x0: pw, x1: 112 };
   strip(M.road, PH.x0 - 3.5, PH.x1, PH.z - PH.half, PH.z + PH.half, 0.01, 4, '#ffffff');
-  strip(M.pave, PH.x0, PH.x1, PH.z - PH.half - PH.pave, PH.z - PH.half, 0.14, 2, '#ffffff');
-  strip(M.pave, PH.x0, PH.x1, PH.z + PH.half, PH.z + PH.half + PH.pave, 0.14, 2, '#ffffff');
+  strip(M.pave, PH.x0, PH.x1, PH.z - PH.half - PH.pave, PH.z - PH.half, 0.14, 1.8, '#ffffff');
+  strip(M.pave, PH.x0, PH.x1, PH.z + PH.half, PH.z + PH.half + PH.pave, 0.14, 1.8, '#ffffff');
   kerbX(PH.z - PH.half, PH.x0, PH.x1); kerbX(PH.z + PH.half, PH.x0, PH.x1);
   for (let x = PH.x0 + 4; x < PH.x1; x += 6) strip(M.color, x, x + 3, PH.z - 0.08, PH.z + 0.08, 0.03, 0, '#f2f2ea', 3);
 
   // Side street west: "Owler Lane" (fictionalised)
   const OL = { z: 50, half: 3.6, pave: 2.2, x0: -112, x1: -pw };
   strip(M.road, OL.x0, OL.x1 + 3.5, OL.z - OL.half, OL.z + OL.half, 0.01, 4, '#ffffff');
-  strip(M.pave, OL.x0, OL.x1, OL.z - OL.half - OL.pave, OL.z - OL.half, 0.14, 2, '#ffffff');
-  strip(M.pave, OL.x0, OL.x1, OL.z + OL.half, OL.z + OL.half + OL.pave, 0.14, 2, '#ffffff');
+  strip(M.pave, OL.x0, OL.x1, OL.z - OL.half - OL.pave, OL.z - OL.half, 0.14, 1.8, '#ffffff');
+  strip(M.pave, OL.x0, OL.x1, OL.z + OL.half, OL.z + OL.half + OL.pave, 0.14, 1.8, '#ffffff');
   kerbX(OL.z - OL.half, OL.x0, OL.x1); kerbX(OL.z + OL.half, OL.x0, OL.x1);
 
   // Back alley behind the shops (a Sheffield "gennel")
@@ -489,6 +503,7 @@ export function buildFirVale(scene, world) {
   world.addBox(112, 114, -50, 50, -200, 200, 'edge');
 
   const meshes = batch.build(scene);
+  for (const m of meshes) { m.castShadow = true; m.receiveShadow = true; }
 
   // Beacon globes (animated)
   const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff9a1a });
@@ -497,7 +512,7 @@ export function buildFirVale(scene, world) {
 
   interactables.push({ x: startShop.x, z: startShop.zc, radius: 3, prompt: 'Talk to the shopkeeper', lines: [
     '<b>Shopkeeper:</b> "Welcome to Fir Vale Mini Mart! We sell everything except the thing you want."',
-    '<b>Shopkeeper:</b> "That Scrap Blaster? Found it in the skip on Owler Lane. No refunds."',
+    '<b>Shopkeeper:</b> "That rifle? Found it in the skip on Owler Lane with a revolver and a note saying SORRY. No refunds."',
     '<b>Shopkeeper:</b> "If you see a lad in a racing wheelchair, DO NOT accept his challenge. He cheats. With skill."',
     '<b>Shopkeeper:</b> "Samosas are fresh. Fresh-ish. Fresh in spirit."',
   ] });
@@ -512,5 +527,6 @@ export function buildFirVale(scene, world) {
     beaconMeshes,
     meshCount: meshes.length + signMeshes.length,
     paveX: pw,
+    surfaceAt,
   };
 }

@@ -4,8 +4,10 @@ import * as THREE from 'three';
 import { input } from '../core/input.js';
 import { settings } from '../core/settings.js';
 import { sfx } from '../audio/audio.js';
+import { play } from '../audio/soundscape.js';
 
 const RUN_SPEED = 7.4;      // m/s — fast, arcade feel
+const SPRINT_SPEED = 10.5, ADS_SPEED = 3.8;
 const ACCEL_GROUND = 60, ACCEL_AIR = 14, FRICTION = 12;
 const GRAVITY = 24, JUMP_V = 8.2, STEP = 0.45;
 
@@ -23,6 +25,9 @@ export class Player {
     this.airTime = 0; this.recoil = 0;
     this.onDamage = null; this.onDeath = null;
     this.aimAssistFactor = 1;
+    this.recoilPitch = 0; this.recoilYaw = 0; // camera kick that settles back
+    this.sprinting = false; this.stamina = 0; this.breathT = 0; this.breathIn = true;
+    this.landed = 0; this.adsK = 0; this.surfaceAt = () => 'paving';
   }
 
   spawn(x, z, yaw) {
@@ -31,6 +36,9 @@ export class Player {
     this.vel.set(0, 0, 0); this.yaw = yaw; this.pitch = 0;
     this.health = 100; this.armour = 25; this.dead = false;
   }
+
+  // Part of the kick stays (you have to pull down), part settles back.
+  addRecoil(pitch, yaw) { this.pitch += pitch * 0.35; this.yaw += yaw * 0.3; this.recoilPitch += pitch * 0.65; this.recoilYaw += yaw * 0.7; }
 
   knock(vx, vy, vz) { this.vel.x += vx; this.vel.y = Math.max(this.vel.y, vy); this.vel.z += vz; this.onGround = false; this.shake = 0.5; }
 
@@ -48,7 +56,7 @@ export class Player {
   update(dt) {
     // ---- look ----
     const touchScale = input.isTouch ? 0.0052 : 0.0024;
-    const sens = settings.sensitivity * touchScale * this.aimAssistFactor;
+    const sens = settings.sensitivity * touchScale * this.aimAssistFactor * (1 - this.adsK * 0.45);
     this.yaw -= input.lookX * sens;
     this.pitch -= input.lookY * sens * (settings.invertY ? -1 : 1);
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
@@ -62,7 +70,9 @@ export class Player {
     const wishX = fx * my + rx * mx, wishZ = fz * my + rz * mx;
     const wishLen = Math.min(1, Math.hypot(mx, my));
     const accel = this.onGround ? ACCEL_GROUND : ACCEL_AIR;
-    const targetX = wishX * RUN_SPEED, targetZ = wishZ * RUN_SPEED;
+    this.sprinting = !!input.sprint && my > 0.5 && this.onGround !== false && this.adsK < 0.3;
+    const speed = this.sprinting ? SPRINT_SPEED : (RUN_SPEED + (ADS_SPEED - RUN_SPEED) * this.adsK);
+    const targetX = wishX * speed, targetZ = wishZ * speed;
     if (wishLen > 0.01) {
       this.vel.x += THREE.MathUtils.clamp(targetX - this.vel.x, -accel * dt, accel * dt);
       this.vel.z += THREE.MathUtils.clamp(targetZ - this.vel.z, -accel * dt, accel * dt);
@@ -76,7 +86,7 @@ export class Player {
     this.jumpBuffer -= dt; this.coyote -= dt;
     if (this.jumpBuffer > 0 && (this.onGround || this.coyote > 0)) {
       this.vel.y = JUMP_V; this.onGround = false; this.coyote = 0; this.jumpBuffer = 0;
-      sfx.jump();
+      play('cloth', { gain: 0.6 }); play('breath_out', { gain: 0.25 });
     }
 
     this.vel.y -= GRAVITY * dt;
@@ -89,7 +99,11 @@ export class Player {
     const floor = this.world.floorAt(this.pos.x, this.pos.z, Math.max(feet, this.pos.y - this.eye), STEP, this.radius * 0.5);
     const wasGround = this.onGround;
     if (feet <= floor + 0.001 || (wasGround && feet - floor < STEP && this.vel.y <= 0)) {
-      if (!wasGround && this.airTime > 0.25) sfx.land(Math.abs(this.vel.y) / 8);
+      if (!wasGround && this.airTime > 0.2) {
+        this.landed = Math.min(6, 2 + this.airTime * 6);
+        play('step_' + this.surface(), { gain: 1, rate: 0.85, jitter: 0.05, send: 0.1 }); play('cloth', { gain: 0.5 });
+        if (this.airTime > 0.9) this.damage(Math.round((this.airTime - 0.9) * 40), 'fall');
+      }
       feet = floor; this.vel.y = 0; this.onGround = true; this.coyote = 0.1; this.airTime = 0;
     } else {
       if (wasGround) this.coyote = 0.1;
@@ -103,8 +117,21 @@ export class Player {
     const hs = Math.hypot(this.vel.x, this.vel.z);
     if (this.onGround && hs > 1) {
       this.stepDist += hs * dt; this.bob += hs * dt * 1.9;
-      if (this.stepDist > 2.2) { this.stepDist = 0; this.leftFoot = !this.leftFoot; sfx.footstep(this.leftFoot, Math.min(1, hs / RUN_SPEED)); }
+      const stride = this.sprinting ? 2.9 : 2.2;
+      if (this.stepDist > stride) {
+        this.stepDist = 0; this.leftFoot = !this.leftFoot;
+        const k = Math.min(1.3, hs / RUN_SPEED);
+        play('step_' + this.surface(), { gain: 0.35 + 0.45 * k, rate: this.leftFoot ? 1 : 0.94, jitter: 0.07, send: 0.08 });
+        if (this.sprinting && Math.random() < 0.5) play('cloth', { gain: 0.25 });
+      }
     } else this.bob += (Math.round(this.bob / Math.PI) * Math.PI - this.bob) * Math.min(1, dt * 8);
+    // breathing: builds up while sprinting, recovers slowly
+    this.stamina = Math.max(0, Math.min(1, this.stamina + (this.sprinting && hs > 5 ? dt * 0.18 : -dt * 0.09)));
+    this.breathT -= dt;
+    if (this.stamina > 0.3 && this.breathT <= 0) {
+      play(this.breathIn ? 'breath_in' : 'breath_out', { gain: 0.15 + this.stamina * 0.3, jitter: 0.05, send: 0 });
+      this.breathT = (this.breathIn ? 0.55 : 0.7) - this.stamina * 0.25; this.breathIn = !this.breathIn;
+    }
     this.applyCamera(dt, hs);
   }
 
@@ -120,9 +147,15 @@ export class Player {
       this.pos.z + (Math.random() - 0.5) * sh * 0.3);
     cam.rotation.order = 'YXZ';
     cam.rotation.y = this.yaw;
-    cam.rotation.x = this.pitch + this.recoil * 0.08;
+    // recoil kick settles back towards where you were aiming
+    const rec = Math.exp(-dt / 0.22);
+    this.recoilPitch *= rec; this.recoilYaw *= rec;
+    cam.rotation.y = this.yaw + this.recoilYaw;
+    cam.rotation.x = this.pitch + this.recoilPitch;
     cam.rotation.z = this.dead ? 0.6 : Math.sin(this.bob * 0.5) * 0.004 * hs;
   }
 
-  forward(v) { return v.set(0, 0, -1).applyQuaternion(this.camera.quaternion); }
+  surface() { return this.surfaceAt(this.pos.x, this.pos.z); }
+
+  forward(v) { this.camera.updateMatrixWorld(); return v.set(0, 0, -1).applyQuaternion(this.camera.quaternion); }
 }

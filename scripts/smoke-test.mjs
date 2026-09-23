@@ -25,10 +25,11 @@ await page.goto('http://localhost:8765/index.html');
 await page.waitForFunction(() => !document.getElementById('btn-start').disabled, null, { timeout: 30000 });
 await page.screenshot({ path: path.join(outDir, '01-title.png') });
 await page.tap('#btn-start');
+await page.waitForFunction(() => window.__firvale.running, null, { timeout: 60000 });
 await page.waitForTimeout(1500);
 await page.screenshot({ path: path.join(outDir, '02-start.png') });
 
-const snap = () => page.evaluate(() => { const g = window.__firvale; return { pos: g.player.pos.toArray().map((v) => +v.toFixed(2)), hp: g.player.health, ammo: g.weapon.ammo, score: g.score, fps: g.fps, dez: [+g.dez.x.toFixed(1), +g.dez.z.toFixed(1), g.dez.state], car: [+g.cars[0].z.toFixed(1), +g.cars[0].speed.toFixed(1), g.cars[0].gear] }; });
+const snap = () => page.evaluate(() => { const g = window.__firvale; return { pos: g.player.pos.toArray().map((v) => +v.toFixed(2)), hp: g.player.health, ammo: g.arsenal.ammo, weapon: g.arsenal.name, state: g.arsenal.current.state, score: g.score, fps: g.fps, dez: [+g.dez.x.toFixed(1), +g.dez.z.toFixed(1), g.dez.state], car: [+g.cars[0].z.toFixed(1), +g.cars[0].speed.toFixed(1), g.cars[0].gear] }; });
 console.log('start', await snap());
 
 // Walk forward with the virtual joystick (touch events on the stick zone).
@@ -53,7 +54,7 @@ console.log('after shots', await snap());
 const rb = await page.locator('#btn-reload').boundingBox();
 await touch('touchStart', [{ x: rb.x + rb.width / 2, y: rb.y + rb.height / 2, id: 4 }]); await page.waitForTimeout(60); await touch('touchEnd', []);
 // (headless software rendering is slow, so wait on the game state, not the clock)
-await page.waitForFunction(() => window.__firvale.weapon.ammo === 8, null, { timeout: 15000 });
+await page.waitForFunction(() => window.__firvale.arsenal.ammo === 30, null, { timeout: 30000 });
 console.log('after reload', await snap());
 
 // Teleport to look at key places for screenshots.
@@ -72,6 +73,11 @@ await page.evaluate(() => { const c = window.__firvale.cars[0]; c.z = -40; c.pau
 await view('09-falcon.png', 7, -20, 3.14159 - 0.5);
 await page.evaluate(() => { const g = window.__firvale; g.dez.x = 6.3; g.dez.z = -8; g.dez.state = 'wheelie'; g.dez.stateT = 5; });
 await view('10-dez.png', 3.2, -5.5, -1.0 + 0.2);
+// ---- weapon showcase ----
+const W = async (name, fn, wait = 400) => { await page.evaluate(fn); await page.waitForTimeout(wait); await page.screenshot({ path: path.join(outDir, name) }); };
+await page.evaluate(() => { const g = window.__firvale; g.player.spawn(-6.6, -7.5, -Math.PI / 2 + 0.12); });
+await W('w01-ak-hip.png', () => {}, 800);
+await W('w02-ak-ads.png', () => { window.__input.aim = true; }, 900);
 console.log('final', await snap());
 console.log('render stats', await page.evaluate(() => { const i = window.__firvale.renderer.info; return { drawCalls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures }; }));
 // Portrait check

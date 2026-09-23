@@ -30,6 +30,9 @@ node scripts/serve.mjs
 | Left side: drag anywhere | WASD / arrows | Move |
 | Right side: drag | Mouse (click to lock) | Look |
 | FIRE (hold, drag to aim) | Left click | Shoot |
+| AIM (toggle) | Right click (hold) | Aim down the sights |
+| Push stick fully forward | Shift | Sprint |
+| R when full | V | Inspect weapon |
 | JUMP | Space | Jump |
 | R | R | Reload |
 | ⇄ | Q | Switch weapon |
@@ -39,7 +42,37 @@ node scripts/serve.mjs
 Settings: look sensitivity, aim assist, auto-fire, gyro aiming, left-handed
 layout, invert look, graphics quality and volume. They are remembered.
 
-## What's in prototype 0.1 (Milestone 1)
+## What's new in 0.2 — weapon & audio overhaul
+
+- **Two detailed weapons** replace the placeholder: the **VK-9 Kestrel**
+  (AK-pattern rifle) and the **Hallam Six** (double-action revolver). Built
+  from real-proportion profiles with bevelled, filleted parts: receiver,
+  ribbed dust cover, gas system, slant muzzle device, sights, rivets, screws,
+  curved bakelite magazine with a visible top round; frame with cylinder
+  window, fluted cylinder with chambers and cartridges, crane, ejector rod
+  and star, hammer, trigger, checkered grips, speedloader.
+- **PBR materials** (colour + roughness + normal maps, all generated in code)
+  with worn bluing, scratches, wood grain, stipple and checkering, lit by
+  image-based sky reflections.
+- **Jointed gloved hands and sleeved forearms.**
+- **Animation:** idle breathing, look sway, walk/sprint bob, spring recoil,
+  landing weight, aim-down-sights, sprint pose, weapon switching, inspect,
+  empty behaviour. Kestrel: bolt carrier cycling, casing ejection, trigger,
+  mag rock-out/rock-in, charging-handle rack on empty. Hallam Six: trigger,
+  hammer cock/fall, cylinder indexing, crane swing-out, ejector stroke,
+  casings falling out, speedloader, cylinder spin on inspect.
+- **Audio engine rewrite:** sample-level synthesis (N-wave supersonic crack,
+  saturated muzzle blast, modal metal and brass resonances, granular debris)
+  rendered into randomised variations; HRTF 3-D positioning; speed-of-sound
+  delay and air absorption with distance; generated outdoor and enclosed
+  reverbs blended by how boxed-in you are; real-time echoes off the nearest
+  buildings; per-material impacts (concrete, brick, asphalt, metal, glass,
+  wood, dirt, plastic), ricochets, bouncing casings, surface-aware
+  footsteps, sprint breathing, cloth, mechanical reload sounds.
+- **World rendering:** filmic tone mapping, PBR brick/stone/asphalt/paving/
+  slate, glossy windows, real-time sun shadows (medium/high quality).
+
+## What was in prototype 0.1 (Milestone 1)
 
 - First-person player with fast arcade movement, jumping, step-up onto kerbs,
   health, armour, knockback and respawn at a checkpoint.
@@ -67,7 +100,8 @@ assets/                 app icon
 src/main.js             boots the game and runs the frame loop
 src/core/               input, settings, collision/terrain, missions
 src/player/             first-person player
-src/weapons/            Scrap Blaster (logic + 3D model)
+src/weapons/            rig, animation, hands, arsenal, gun models (models/)
+src/render/             image-based lighting
 src/entities/           Falcon R AI, Dez, props, effects
 src/models/             low-poly model builders (car, characters, batching)
 src/maps/               Fir Vale district layout

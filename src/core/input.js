@@ -6,14 +6,23 @@ export const input = {
   moveX: 0, moveY: 0,       // joystick / WASD, -1..1 (moveY +1 = forward)
   lookX: 0, lookY: 0,       // accumulated look delta in "pixels" since last frame
   fire: false,              // held
-  jump: false, reload: false, use: false, swap: false, // one-shot presses
+  firePressed: false,       // true on the frame fire went down
+  aim: false,               // aim down sights (toggle on touch, hold right mouse)
+  sprint: false,            // Shift, or joystick pushed hard forward
+  jump: false, reload: false, use: false, swap: false, inspect: false, // one-shot presses
   isTouch: false,
   pointerLocked: false,
 };
 
+let fireWas = false;
+export function beginFrame() {
+  input.firePressed = input.fire && !fireWas;
+  fireWas = input.fire;
+  if (input.isTouch && stickTouch !== null) input.sprint = input.moveY > 0.92 && Math.abs(input.moveX) < 0.45;
+}
 export function consumeFrame() {
   input.lookX = 0; input.lookY = 0;
-  input.jump = false; input.reload = false; input.use = false; input.swap = false;
+  input.jump = false; input.reload = false; input.use = false; input.swap = false; input.inspect = false;
 }
 
 const keys = new Set();
@@ -22,7 +31,7 @@ let enabled = false;
 
 export function setInputEnabled(v) {
   enabled = v;
-  if (!v) { input.fire = false; input.moveX = 0; input.moveY = 0; keys.clear(); }
+  if (!v) { input.fire = false; input.moveX = 0; input.moveY = 0; input.sprint = false; keys.clear(); }
 }
 
 function updateKeyMove() {
@@ -93,7 +102,7 @@ function setupTouch(stickEl, knobEl) {
 
   const end = (e) => {
     for (const t of e.changedTouches) {
-      if (t.identifier === stickTouch) { stickTouch = null; resetStick(); }
+      if (t.identifier === stickTouch) { stickTouch = null; resetStick(); input.sprint = false; }
       if (t.identifier === lookTouch) lookTouch = null;
       if (t.identifier === fireTouch) { fireTouch = null; input.fire = false; document.getElementById('btn-fire').classList.remove('pressed'); }
     }
@@ -117,6 +126,7 @@ function setupTouch(stickEl, knobEl) {
   bindBtn('btn-reload', () => { input.reload = true; });
   bindBtn('btn-switch', () => { input.swap = true; });
   bindBtn('btn-use', () => { input.use = true; });
+  bindBtn('btn-aim', () => { input.aim = !input.aim; document.getElementById('btn-aim').classList.toggle('on', input.aim); });
 }
 
 // ---------------- gyro ----------------
@@ -158,17 +168,21 @@ function setupDesktop() {
     if (e.code === 'KeyR') input.reload = true;
     if (e.code === 'KeyE' || e.code === 'KeyF') input.use = true;
     if (e.code === 'KeyQ' || e.code.startsWith('Digit')) input.swap = true;
+    if (e.code === 'KeyV') input.inspect = true;
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.sprint = true;
     updateKeyMove();
   });
-  window.addEventListener('keyup', (e) => { keys.delete(e.code); updateKeyMove(); });
+  window.addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code.startsWith('Shift')) input.sprint = false; updateKeyMove(); });
   window.addEventListener('blur', () => { keys.clear(); updateKeyMove(); input.fire = false; });
 
   canvasEl.addEventListener('mousedown', (e) => {
     if (!enabled || input.isTouch) return;
     if (!input.pointerLocked) { canvasEl.requestPointerLock?.(); return; }
     if (e.button === 0) input.fire = true;
+    if (e.button === 2) input.aim = true;
   });
-  window.addEventListener('mouseup', (e) => { if (e.button === 0) input.fire = false; });
+  window.addEventListener('mouseup', (e) => { if (e.button === 0) input.fire = false; if (e.button === 2) input.aim = false; });
+  canvasEl.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('mousemove', (e) => {
     if (!enabled || !input.pointerLocked) return;
     input.lookX += e.movementX; input.lookY += e.movementY;

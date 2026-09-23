@@ -1,12 +1,16 @@
 // FIR VALE — entry point. Sets up the renderer, builds the district,
 // spawns the player, the Falcon R, Dez and the props, then runs the loop.
 import * as THREE from 'three';
-import { initInput, input, consumeFrame, setInputEnabled, requestGyro } from './core/input.js';
+import { initInput, input, beginFrame, consumeFrame, setInputEnabled, requestGyro } from './core/input.js';
 import { settings, saveSettings, onSettingsChange } from './core/settings.js';
 import { World } from './core/world.js';
 import { buildFirVale } from './maps/firVale.js';
 import { Player } from './player/player.js';
-import { ScrapBlaster } from './weapons/scrapBlaster.js';
+import { Arsenal } from './weapons/arsenal.js';
+import { weaponMaterials } from './weapons/materials.js';
+import { Casings } from './entities/casings.js';
+import { makeEnvironment } from './render/environment.js';
+import { initSoundscape, setEnvironment } from './audio/soundscape.js';
 import { Car, parkedFalcon } from './entities/car.js';
 import { Dez } from './entities/dez.js';
 import { Props } from './entities/props.js';
@@ -17,9 +21,9 @@ import { MissionRunner, missionWelcome } from './core/missions.js';
 import { skyTexture } from './textures/procedural.js';
 
 const QUALITY = {
-  low: { dpr: 1, fogNear: 25, fogFar: 110, aa: false },
-  medium: { dpr: 1.5, fogNear: 35, fogFar: 150, aa: true },
-  high: { dpr: 2, fogNear: 45, fogFar: 190, aa: true },
+  low: { dpr: 1, fogNear: 30, fogFar: 120, aa: false, shadows: 0 },
+  medium: { dpr: 1.5, fogNear: 40, fogFar: 160, aa: true, shadows: 1024 },
+  high: { dpr: 2, fogNear: 50, fogFar: 200, aa: true, shadows: 2048 },
 };
 
 function fatal(err) {
@@ -39,6 +43,9 @@ function boot() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;  // filmic highlights, like a real camera
+  renderer.toneMappingExposure = 1.0;
+  if (q.shadows) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; }
   renderer.autoClear = false;
   renderer.info.autoReset = false; // we render two passes per frame; count both
 
@@ -47,37 +54,50 @@ function boot() {
   scene.fog = new THREE.Fog(0xd6d2c6, q.fogNear, q.fogFar);
   const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 700);
 
-  // Lighting: sky/ground bounce + one warm "sun". No real-time shadows (too
-  // expensive on phones) — blob shadows under things instead.
-  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x7a6450, 2.1));
-  const sun = new THREE.DirectionalLight(0xfff0d8, 2.3);
-  sun.position.set(0.55, 1, 0.35);
-  scene.add(sun);
+  // Lighting: image-based sky light (reflections + ambient) and a warm sun
+  // with real-time shadows that follow the player (medium/high quality).
+  const env = makeEnvironment(renderer);
+  scene.environment = env;
+  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x7a6450, 0.6));
+  const sun = new THREE.DirectionalLight(0xfff0d8, 3.2);
+  sun.position.set(22, 40, 14);
+  if (q.shadows) {
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(q.shadows, q.shadows);
+    const sc = sun.shadow.camera; sc.left = -38; sc.right = 38; sc.top = 38; sc.bottom = -38; sc.near = 1; sc.far = 140;
+    sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.04;
+  }
+  scene.add(sun, sun.target);
 
-  // Separate little scene for the weapon so it never clips into walls.
+  // Separate scene for the weapon so it never clips into walls. Same sky
+  // reflections so the metal matches the world.
   const vmScene = new THREE.Scene();
-  const vmCamera = new THREE.PerspectiveCamera(60, camera.aspect, 0.01, 10);
-  vmScene.add(new THREE.HemisphereLight(0xdfe8ff, 0x6a5a48, 2.2));
-  const vmSun = new THREE.DirectionalLight(0xfff0d8, 1.8); vmSun.position.set(0.3, 1, 0.6); vmScene.add(vmSun);
+  vmScene.environment = env;
+  const vmCamera = new THREE.PerspectiveCamera(64, camera.aspect, 0.02, 10);
+  vmScene.add(new THREE.HemisphereLight(0xdfe8ff, 0x6a5a48, 0.5));
+  const vmSun = new THREE.DirectionalLight(0xfff0d8, 2.2); vmSun.position.set(0.4, 1, 0.3); vmScene.add(vmSun);
+  const vmFill = new THREE.DirectionalLight(0xbcd0ff, 0.6); vmFill.position.set(-1, 0.2, 0.5); vmScene.add(vmFill);
 
   const world = new World();
-  const map = buildFirVale(scene, world);
+  const map = buildFirVale(scene, world, settings.quality);
   const hud = new Hud(camera);
   const effects = new Effects(scene);
   const props = new Props(scene, map.props);
   const player = new Player(camera, world);
+  player.surfaceAt = map.surfaceAt;
   player.spawn(map.spawn.x, map.spawn.z, map.spawn.yaw);
 
   Object.assign(game, { renderer, scene, camera, world, map, hud, effects, props, player });
 
-  const weapon = new ScrapBlaster(game);
-  vmScene.add(weapon.holder);
-  game.weapon = weapon;
+  game.casings = new Casings(scene, world, weaponMaterials(settings.quality), map.surfaceAt);
+  const arsenal = new Arsenal(game, vmScene, settings.quality);
+  game.arsenal = arsenal; game.weapon = arsenal;
 
   // Traffic: one Falcon R doing laps, one parked up in the car park.
   const car = new Car(scene, world, { lane: 'south', z: -90, paint: 0x1d5fd1, plate: 'FV24 ZAP', hud });
   parkedFalcon(scene, world, 18.5, 40, Math.PI / 2, 0xf1b700, 'S4 SNAX');
   game.cars = [car];
+  scene.traverse((o) => { if (o.isMesh && !o.castShadow && o.geometry && o.material && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
 
   const dez = new Dez(scene, world, { x: map.paveX - 2.2, z0: -26, z1: 26, hud });
   game.dez = dez;
@@ -110,7 +130,7 @@ function boot() {
     hud.subtitle('<b>Respawning at the Mini Mart…</b> (checkpoint)', 2.5);
     setTimeout(() => {
       player.spawn(map.spawn.x, map.spawn.z, map.spawn.yaw);
-      weapon.ammo = weapon.stats.mag; weapon.reserve = Math.max(weapon.reserve, 24);
+      for (const w of arsenal.weapons) w.reserve = Math.max(w.reserve, w.magSize * 3);
     }, 2600);
   };
 
@@ -138,6 +158,7 @@ function boot() {
     vmCamera.aspect = w / h; vmCamera.updateProjectionMatrix();
     // wider FOV in portrait so you can still see something
     camera.fov = w < h ? 85 : 72; camera.updateProjectionMatrix();
+    vmCamera.fov = w < h ? 74 : (game.vmFovBase ?? 64); vmCamera.updateProjectionMatrix();
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
@@ -156,7 +177,13 @@ function boot() {
     fpsAcc += dt; fpsN++;
     if (fpsAcc > 2) { game.fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
     if (dt > 0.05) dt = 0.05;
-    if (!game.running || game.paused) { consumeFrame(); return; }
+    if (!game.running || game.paused || game.frozen) { consumeFrame(); return; }
+    step(dt, true);
+  }
+  // One simulation step (+ render). Tests can call game.advance() to move
+  // game time precisely regardless of how fast the machine renders.
+  function step(dt, render) {
+    beginFrame();
 
     // Aim assist slows the look speed a touch when a target is under the crosshair.
     player.forward(fwd);
@@ -164,8 +191,20 @@ function boot() {
     player.aimAssistFactor = settings.aimAssist && target ? 0.55 : 1;
     hud.onTarget(!!target);
 
+    player.adsK = arsenal.adsK;
     player.update(dt);
-    weapon.update(dt, !!target);
+    const autoFire = settings.autoFire && !!target;
+    arsenal.update(dt, {
+      fire: input.fire || autoFire, firePressed: input.firePressed || (autoFire && !game._autoWas), aim: input.aim,
+      sprinting: player.sprinting, reload: input.reload, inspect: input.inspect, swap: input.swap,
+      lookX: input.lookX, lookY: input.lookY, landed: player.landed,
+    });
+    game._autoWas = autoFire; player.landed = 0;
+    // aiming zooms the view a little, like bringing the sights to your eye
+    const wantFov = (camera.aspect < 1 ? 85 : 72) + (arsenal.current.aimFov - 72) * arsenal.adsK;
+    if (Math.abs(camera.fov - wantFov) > 0.01) { camera.fov = wantFov; camera.updateProjectionMatrix(); }
+    document.body.classList.toggle('ads', arsenal.adsK > 0.6);
+    game.casings.update(dt);
     for (const c of game.cars) c.update(dt, player);
     for (const n of game.npcs) n.update(dt, player);
     props.update(dt);
@@ -178,7 +217,6 @@ function boot() {
       if (it.npc) { it.npc.interact(player); game.stats.talkedToDez = true; }
       else { it.i = ((it.i ?? -1) + 1) % it.lines.length; hud.subtitle(it.lines[it.i], 4); }
     }
-    if (input.swap) hud.toast('Only the Scrap Blaster for now!', 1.6);
 
     // stats for the mission
     game.stats.moved += Math.hypot(player.pos.x - movedFrom.x, player.pos.z - movedFrom.z);
@@ -191,19 +229,28 @@ function boot() {
 
     // audio listener follows the camera
     updateListener(camera.position, fwd);
+    setEnvironment(camera.position, arsenal.env.enclosure);
+    // keep the sun's shadow box centred on the player (snapped to avoid shimmer)
+    if (sun.castShadow) {
+      const sx = Math.round(player.pos.x / 2) * 2, sz = Math.round(player.pos.z / 2) * 2;
+      sun.target.position.set(sx, player.pos.y - 1.6, sz); sun.position.set(sx + 22, player.pos.y + 38, sz + 14);
+    }
     if (!humNode && map.startShop) humNode = makeHum(map.startShop.x + 1.5, 3.4, map.startShop.zc);
 
     hud.vitals(player.health, player.armour);
-    hud.ammo(weapon);
+    hud.ammo(arsenal);
     hud.update(dt);
 
-    renderer.info.reset();
-    renderer.clear();
-    renderer.render(scene, camera);
-    renderer.clearDepth();
-    if (!player.dead) renderer.render(vmScene, vmCamera);
+    if (render) {
+      renderer.info.reset();
+      renderer.clear();
+      renderer.render(scene, camera);
+      renderer.clearDepth();
+      if (!player.dead) renderer.render(vmScene, vmCamera);
+    }
     consumeFrame();
   }
+  game.advance = (seconds, fps = 30) => { const n = Math.round(seconds * fps); for (let i = 0; i < n; i++) step(1 / fps, i === n - 1); };
   requestAnimationFrame(frame);
 
   // Render one frame behind the title screen so it looks alive.
@@ -275,6 +322,10 @@ function wireUI() {
   startBtn.addEventListener('click', async () => {
     initAudio();
     setVolume(settings.volume);
+    // Render the sound library (a second or two) before play starts.
+    startBtn.disabled = true;
+    await initSoundscape({ quality: settings.quality, onProgress: (k) => { loading.textContent = `Recording the soundscape… ${Math.round(k * 100)}%`; } });
+    loading.textContent = 'Ready.';
     if (settings.gyro) requestGyro();
     for (const c of game.cars) c.startAudio();
     $('title').classList.add('hidden');
@@ -290,3 +341,4 @@ function wireUI() {
 initInput(document.getElementById('game'));
 wireUI();
 window.__firvale = game; // handy for debugging
+window.__input = input;

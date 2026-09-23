@@ -109,3 +109,15 @@ export class StaticBatch {
 export function lambert(opts = {}) {
   return new THREE.MeshLambertMaterial({ vertexColors: true, ...opts });
 }
+
+// Physically based material for world surfaces: colour, roughness and
+// normal maps from a procedural PBR set, tinted per-vertex.
+export function pbr(set, opts = {}) {
+  return new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    map: set?.map ?? null, roughnessMap: set?.roughnessMap ?? null, normalMap: set?.normalMap ?? null,
+    normalScale: new THREE.Vector2(opts.normal ?? 1, opts.normal ?? 1),
+    roughness: opts.roughness ?? 1, metalness: opts.metalness ?? 0, envMapIntensity: opts.env ?? 0.8,
+    flatShading: !!opts.flatShading,
+  });
+}

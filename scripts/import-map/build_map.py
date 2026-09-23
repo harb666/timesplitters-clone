@@ -24,7 +24,7 @@ DATA = sys.argv[1] if len(sys.argv) > 1 else '/tmp/claude-0/ov'
 OUT = os.path.join(os.path.dirname(__file__), '../../src/maps/firvale/osm.js')
 LAT0, LON0 = 53.4093, -1.45
 KX, KZ = 111320 * math.cos(math.radians(LAT0)), 111220
-B = dict(minX=-620, maxX=800, minZ=-520, maxZ=460)       # playable area
+B = dict(minX=-620, maxX=800, minZ=-1000, maxZ=460)       # playable area
 PAD = 160                                                  # scenery beyond the edge
 def loc(lon, lat): return ((lon - LON0) * KX, -(lat - LAT0) * KZ)
 def inb(x, z, pad=0): return B['minX'] - pad < x < B['maxX'] + pad and B['minZ'] - pad < z < B['maxZ'] + pad

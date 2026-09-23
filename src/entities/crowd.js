@@ -448,7 +448,7 @@ export class Crowd {
       }
       // smooth turning
       let d = p.yaw - p.yawS; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; p.yawS += d * Math.min(1, dt * 8);
-      if (dist > 130) continue;
+      if (dist > 100) continue;
       const pose = p.cower > 0 ? 3 : p.pose;
       // instance
       const i = vis++;

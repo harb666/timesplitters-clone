@@ -186,7 +186,26 @@ export class RoadNetwork {
         this.kerb(batch, M.kerb, r, side, keep);
       }
       if (r.kind !== 's') this.markings(batch, M.line, r);
+      this.furniture(batch, M, r);
     });
+  }
+
+  // Road-surface detail: gully grates along the kerbs, manhole covers,
+  // patched tarmac (all flat, drawn only up close).
+  furniture(batch, M, r) {
+    if (r.kind === 'f' || r.length < 12) return;
+    let seed = r.id * 9301 + 49297; const R = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+    const lift = 0.02 + RANK[r.kind] * 0.012 + 0.012;
+    const put = (mat, s, off, w, l, color, rot = 0) => {
+      const p = this.pointAt(r, s, off, {});
+      if (this.onCarriageway(p.x, p.z, r, -0.3)) return;
+      batch.add(mat, flat(w, l), { x: p.x, y: G(p.x, p.z) + lift, z: p.z, color, ry: Math.atan2(p.tx, p.tz) + rot, detail: true });
+    };
+    if (r.pave > 0) for (let s = 8 + R() * 10; s < r.length - 4; s += 22 + R() * 14) for (const side of [1, -1]) put(M.metal, s + side * 3, side * (r.half - 0.28), 0.42, 0.6, '#2b2d30');
+    for (let s = 20 + R() * 30; s < r.length - 5; s += 45 + R() * 50) {
+      const off = (R() - 0.5) * r.half; if (R() < 0.6) put(M.metal, s, off, 0.7, 0.7, '#3a3c3f', R() * 3); else put(M.metal, s, off, 0.6, 0.9, '#3a3c3f');
+    }
+    for (let s = 15 + R() * 40; s < r.length - 5; s += 35 + R() * 70) { const w = 1 + R() * 2.2, l = 1.2 + R() * 4; put(M.road, s, (R() - 0.5) * (r.half * 2 - w), w, l, R() < 0.5 ? '#6f6f6f' : '#9a9a9a'); }
   }
 
   // Strip between lateral offsets o0..o1 following the road and terrain,

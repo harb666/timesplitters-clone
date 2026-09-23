@@ -119,7 +119,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   const fp = buildFootprints(batch, M, world, net, OSM, { signs, shopCells: signs.cells, special, miniMartAt: PLACES.miniMart });
 
   // ---- ground: real terrain + land-cover mask ----
-  const mask = landMask(OSM, fp.residential);
+  const mask = landMask(OSM, fp.residential, fp.list);
   const gmat = groundMaterial(mask, quality === 'low' ? 256 : 512);
   buildGround(batch, gmat);
   buildFarTerrain(scene, OSM.far, haze, sunDir);

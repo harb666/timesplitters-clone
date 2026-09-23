@@ -332,6 +332,9 @@ function backYards(B, batch, M, world, net, R) {
     const depth = room >= 24 ? 6 : Math.max(0, Math.min(7, (room - 2.2) / 2));
     if (depth < 2) continue;
     const dEnd = dBack - depth, W = pl.a1 - pl.a0, wh = 1.75, col = B.tint;
+    // flagged yard + half the back entry behind it, for the ground mask
+    const dAlley = dBack - (room >= 24 ? depth + 1.5 : Math.max(depth, room / 2));
+    (B.yards ||= []).push([F.toW(pl.a0, dBack), F.toW(pl.a1, dBack), F.toW(pl.a1, dAlley), F.toW(pl.a0, dAlley)]);
     const f = new Frame(batch, ...F.toW(am, dEnd), Math.atan2(-F.nx, -F.nz), G(...F.toW(am, dEnd)));
     // rear wall with a gate (local +Z = away from the house, X runs along the row, mirrored)
     const gx = (R() < 0.5 ? -1 : 1) * (W / 2 - 0.9), gw = 0.95;
@@ -407,8 +410,13 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     if (r) {
       const gd = r.dist - 2 - r.road.half - r.road.pave;         // front of the house to the back of the pavement
       const toFront = Math.hypot(fx - r.px, fz - r.pz) - r.road.half - r.road.pave;
-      if (toFront > 1.1 && toFront < 9) {
+      if (toFront > 1.1 && toFront < 24) {
         const z = toFront - 0.15;
+        // flagged path from the gate to the front door across longer gardens
+        if (z > 2.4) {
+          const ey = G(...F.toW(am + dx, B.dMax + z)) - pl.gF, sl = Math.atan2(ey, z);
+          f.box(M.stone, dx, ey / 2 + 0.02, z / 2, 0.95, 0.06, Math.hypot(z, ey), { color: '#a39c90', rx: -sl, detail: true });
+        }
         for (const [a, b] of [[-W / 2, dx - 0.6], [dx + 0.6, W / 2]].map(([a, b]) => [Math.min(a, b), Math.max(a, b)])) {
           if (b - a < 0.2) continue;
           const gy = G(...F.toW(am + (a + b) / 2, B.dMax + z)) - pl.gF;

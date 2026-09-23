@@ -1,8 +1,8 @@
 // Ground: the real Fir Vale terrain (open elevation data), textured by a
 // land-cover mask painted from the open land-use map: lawns, parks,
 // playing fields and woods are grass; car parks are tarmac; scrub and waste
-// ground are worn earth; everything else is the concrete/flagged yards and
-// tarmac of the terraced streets. Beyond the district, the real hills out
+// ground are worn earth; the yards behind the terraces and the forecourts
+// round shops and works are flagged/concrete; left-over ground is verges. Beyond the district, the real hills out
 // to 8 km (Wincobank, Grenoside, the Don valley, the city) fade into haze.
 import * as THREE from 'three';
 import { groundHeight as G, TERRAIN } from '../../core/world.js';
@@ -11,17 +11,28 @@ import * as PB from '../../textures/pbr.js';
 import { flatToPts } from './geom.js';
 
 const GRASSY = { grass: [235, 0, 0], park: [255, 0, 0], pitch: [255, 0, 0], churchyard: [230, 20, 0], wood: [190, 110, 0], scrub: [170, 120, 0],
-  allot: [150, 140, 0], rough: [60, 210, 0], tree: [200, 60, 0], play: [0, 0, 255], paved: [0, 0, 150], hospital: [0, 0, 0], school: [0, 0, 0] };
+  allot: [150, 140, 0], rough: [60, 210, 0], tree: [200, 60, 0], play: [0, 0, 255], paved: [0, 0, 150] };
 
-export function landMask(osm, residential) {
+export function landMask(osm, residential, all = []) {
   const T = TERRAIN, x0 = T.x0, z0 = T.z0, w = (T.nx - 1) * T.step, h = (T.nz - 1) * T.step;
   const S = 1; // pixels per metre
   const c = document.createElement('canvas'); c.width = Math.ceil(w * S); c.height = Math.ceil(h * S);
   const g = c.getContext('2d');
-  g.fillStyle = 'rgb(40,10,0)'; g.fillRect(0, 0, c.width, c.height);        // a little green in the yards by default
+  // open ground left over between the streets and the buildings is verges,
+  // front lawns and scrubby grass, a bit worn in places
+  g.fillStyle = 'rgb(175,55,0)'; g.fillRect(0, 0, c.width, c.height);
   const path = (P) => { g.beginPath(); P.forEach(([x, z], i) => (i ? g.lineTo((x - x0) * S, (z - z0) * S) : g.moveTo((x - x0) * S, (z - z0) * S))); g.closePath(); };
-  // gardens round the semis/detached houses of the estates
   g.lineJoin = 'round';
+  // flagged/concrete back yards round the terraces, forecourts round shops,
+  // flats and works (a little moss and grass in the cracks)
+  for (const B of all) {
+    if (!B.P || B.modern || B.type === 'skip') continue;
+    const wide = B.type === 'res' ? 5 : B.type === 'hospital' || B.type === 'school' ? 10 : 14;
+    g.strokeStyle = g.fillStyle = 'rgb(40,10,0)';
+    path(B.P); g.lineWidth = wide * S; g.stroke(); g.fill();
+    if (B.yards) for (const Y of B.yards) { path(Y); g.lineWidth = 1; g.fill(); g.stroke(); }
+  }
+  // gardens round the semis/detached houses of the estates
   for (const B of residential) if (B.modern) { path(B.P); g.strokeStyle = 'rgb(215,15,0)'; g.lineWidth = 18 * S; g.stroke(); }
   const order = ['school', 'hospital', 'paved', 'rough', 'allot', 'scrub', 'wood', 'grass', 'churchyard', 'park', 'pitch', 'tree', 'play'];
   const lu = [...osm.landuse].filter((l) => l.p.length >= 6).sort((a, b) => order.indexOf(a.k) - order.indexOf(b.k));

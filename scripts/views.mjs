@@ -26,7 +26,11 @@ for (const [name, v] of views) {
   await page.evaluate((v) => {
     const g = window.__firvale, p = g.player;
     g.frozen = true;
-    if (v && v.person) {
+    if (v && v.car !== undefined) {
+      const c = g.cars[v.car]; g.advance(0.2);
+      const x = c.x + c.hz * 7 + c.hx * 5, z = c.z - c.hx * 7 + c.hz * 5;
+      p.spawn(x, z, Math.atan2(x - c.x, z - c.z)); g.frozen = true; v.noAdvance = true;
+    } else if (v && v.person) {
       const kind = v.person, q = g.crowd.people.filter((o) => o.kind === kind)[v.i || 0];
       const a = q.yawS + (v.ang || 0), x = q.x + Math.sin(a) * (v.d || 4), z = q.z + Math.cos(a) * (v.d || 4);
       p.spawn(x, z, Math.atan2(x - q.x, z - q.z));
@@ -37,7 +41,7 @@ for (const [name, v] of views) {
     if (v && v.turn) p.yaw += v.turn;
     if (v && v.pitch !== undefined) p.pitch = v.pitch;
     if (v && v.up) p.pos.y += v.up;
-    g.advance(0.5);
+    if (!(v && v.noAdvance)) g.advance(0.5); else g.advance(1 / 30);
     if (v && v.up) { p.pos.y += v.up; p.vel && p.vel.set(0, 0, 0); g.advance(1 / 30); }
   }, v);
   await page.screenshot({ path: path.join(out, `${prefix}-${name}.png`) });

@@ -151,8 +151,9 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   for (const p of fronts) { const k = GK(p.front[0], p.front[1]); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(p); }
   const nearPlot = (x, z, maxD) => {
     let best = null, bd = maxD;
-    for (let ix = -1; ix <= 1; ix++) for (let iz = -1; iz <= 1; iz++) for (const p of grid.get(GK(x + ix * 20, z + iz * 20)) || []) {
-      const d = Math.hypot(p.front[0] - x, p.front[1] - z) + (p.shop ? 6 : 0);
+    for (let ix = -2; ix <= 2; ix++) for (let iz = -2; iz <= 2; iz++) for (const p of grid.get(GK(x + ix * 20, z + iz * 20)) || []) {
+      if (p.shop) continue;
+      const d = Math.hypot(p.front[0] - x, p.front[1] - z);
       if (d < bd) { bd = d; best = p; }
     }
     return best;
@@ -161,8 +162,8 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   if (miniMartAt) { miniMart = nearPlot(miniMartAt[0], miniMartAt[1], 25); if (miniMart) miniMart.shop = { cat: 'grocer', cell: shopCells.miniMart[0], miniMart: true, awning: '#1f8a4c', stall: true, aboard: true }; }
   for (const [x, z, cat] of osm.shops) {
     if (cat === 'petrol') continue;
-    const p = nearPlot(x, z, 16);
-    if (!p || p.shop) continue;
+    const p = nearPlot(x, z, 26);
+    if (!p) continue;
     p.shop = { cat, cell: cellFor(cat) };
     if (cat === 'grocer' && R() < 0.7) { p.shop.stall = true; p.shop.awning = ['#b3121f', '#2f7d2f', '#1e3a8a'][(R() * 3) | 0]; }
     if ((cat === 'takeaway' || cat === 'cafe' || cat === 'barber') && R() < 0.5) p.shop.aboard = true;
@@ -188,6 +189,9 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   }
   ms.flush(batch); detailMs.flush(batch, true);
   finishHospital(batch, M, world, pending);
+  // ---- pass 4: back yards behind the terraces (now every building has its colliders) ----
+  const RY = rng(77);
+  for (const B of list) if (B.type === 'res' && !B.modern && B.plots) backYards(B, batch, M, world, net, RY);
   const residential = list.filter((b) => b.type === 'res');
   return { shopSpots, miniMart: shopSpots.find((s) => s.miniMart), residential, list };
 }
@@ -266,6 +270,25 @@ function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots)
       const UV = reg.map(([a, d]) => [a / 0.9, (d - dR) / 0.9 * 1.25]);
       ms.tris(roofMat, roofCol, V, UV, T, true);
     }
+    // loft conversions: rear box dormer, or roof lights
+    if (Dm > 6 && pl.a1 - pl.a0 > 3.8) {
+      const u = R();
+      if (u < 0.09) {
+        const a0 = pl.a0 + 0.5, a1 = pl.a1 - 0.5, dIn = dR - 0.25, dOut = dR - Dm / 2 + 0.9, top = ridge - 0.15, low = hMain(dOut);
+        const q = (a, d, y) => lift(W(a, d), y);
+        const dcol = R() < 0.5 ? '#3c3f44' : '#d9d6cf', dmat = dcol === '#3c3f44' ? M.slate : M.render;
+        ms.poly(dmat, dcol, [q(a0, dOut, low), q(a1, dOut, low), q(a1, dOut, top), q(a0, dOut, top)], [[0, 0], [2, 0], [2, 1], [0, 1]], [-F.nx, 0, -F.nz]);
+        for (const [a, sgn] of [[a0, -1], [a1, 1]]) ms.poly(dmat, dcol, [q(a, dOut, low), q(a, dIn, hMain(dIn)), q(a, dIn, top), q(a, dOut, top)], [[0, 0], [1, 0], [1, 1], [0, 1]], [F.tx * sgn, 0, F.tz * sgn]);
+        ms.poly(M.roofFlat, '#3a3c40', [q(a0, dOut, top), q(a1, dOut, top), q(a1, dIn, top), q(a0, dIn, top)], [[0, 0], [1, 0], [1, 1], [0, 1]], [0, 1, 0]);
+        const nW = [-F.nx, -F.nz], [wx, wz] = W((a0 + a1) / 2, dOut);
+        winQuad(ms, M, wx, wz, (low + top) / 2 + 0.1, Math.min(2.2, a1 - a0 - 0.6), Math.max(0.6, top - low - 0.6), nW, (R() * 4) | 0, 0.02);
+      } else if (u < 0.3) {
+        for (const dd of [dR - Dm * 0.28, ...(R() < 0.4 ? [dR + Dm * 0.25] : [])]) {
+          const ac = (pl.a0 + pl.a1) / 2 + (R() - 0.5) * 1.2, h0 = hMain(dd - 0.45), h1 = hMain(dd + 0.45);
+          ms.poly(M.glass, '#2a343c', [lift(W(ac - 0.38, dd - 0.45), h0 + 0.06), lift(W(ac + 0.38, dd - 0.45), h0 + 0.06), lift(W(ac + 0.38, dd + 0.45), h1 + 0.06), lift(W(ac - 0.38, dd + 0.45), h1 + 0.06)], [[0, 0], [1, 0], [1, 1], [0, 1]], [0, 1, 0]);
+        }
+      }
+    }
     // ridge tiles
     if (!B.modern || R() < 0.5) dms.poly(M.ridge, '#6a3b30', [[...lift(W(pl.a0, dR - 0.14), ridge + 0.02)], [...lift(W(pl.a1, dR - 0.14), ridge + 0.02)], [...lift(W(pl.a1, dR), ridge + 0.12)], [...lift(W(pl.a0, dR), ridge + 0.12)]], [[0, 0], [1, 0], [1, 1], [0, 1]], [0, 1, 0]);
     // chimney on the party wall
@@ -291,6 +314,46 @@ function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots)
     const gy = shopPl ? shopPl.gF : minG + 0.6;
     const box = world.addOBB(cx, cz, L / 2 + 0.05, 0.2, Math.atan2(nx, nz), gy - 2, maxTop, 'building');
     if (shopPl) box.shop = true;
+  }
+}
+// Victorian back yards: brick walls between neighbours and along the back,
+// a wooden gate onto the alley, and the bins.
+const BINS = ['#1e1f21', '#1e1f21', '#1f4e9a', '#6b4a2e'];   // Sheffield: black (general), blue (paper), brown (glass/cans)
+function backYards(B, batch, M, world, net, R) {
+  const F = B.F;
+  for (const pl of B.plots) {
+    let dBack = Infinity; for (const [, d] of pl.piece) dBack = Math.min(dBack, d);
+    const am = (pl.a0 + pl.a1) / 2, [bx, bz] = F.toW(am, dBack - 0.05), g = G(bx, bz);
+    // how much room behind: next building / wall / road
+    const hit = world.raycastBoxes(bx, g + 1, bz, -F.nx, 0, -F.nz, 26);
+    const rr = net.nearest(bx - F.nx * 4, bz - F.nz * 4, null, (q) => q.kind !== 'f');
+    let room = hit.dist;
+    if (rr) { const edge = Math.hypot(bx - rr.px, bz - rr.pz) - rr.road.half - rr.road.pave; if (edge < room) room = Math.max(0, edge) * 2 + 2.2; } // a street right behind: yard up to its pavement
+    const depth = room >= 24 ? 6 : Math.max(0, Math.min(7, (room - 2.2) / 2));
+    if (depth < 2) continue;
+    const dEnd = dBack - depth, W = pl.a1 - pl.a0, wh = 1.75, col = B.tint;
+    const f = new Frame(batch, ...F.toW(am, dEnd), Math.atan2(-F.nx, -F.nz), G(...F.toW(am, dEnd)));
+    // rear wall with a gate (local +Z = away from the house, X runs along the row, mirrored)
+    const gx = (R() < 0.5 ? -1 : 1) * (W / 2 - 0.9), gw = 0.95;
+    const segs = [[-W / 2, gx - gw / 2], [gx + gw / 2, W / 2]];
+    for (const [a, b] of segs) if (b - a > 0.1) {
+      f.box(M.brick, -(a + b) / 2, wh / 2 - 0.3, 0, b - a, wh + 0.6, 0.22, { tile: 1.3, color: col, detail: true });
+      f.box(M.stone, -(a + b) / 2, wh + 0.03, 0, b - a + 0.02, 0.08, 0.3, { color: '#b9ae9a', detail: true });
+    }
+    f.box(M.wood, -gx, wh * 0.45, -0.02, gw, wh * 0.9, 0.06, { color: ['#3d5a3a', '#5a3b2a', '#2f3e5c', '#6b6b6b'][(R() * 4) | 0], detail: true });
+    const [wx, wz] = f.world(0, 0); world.addOBB(wx, wz, W / 2, 0.12, Math.atan2(-F.nx, -F.nz), f.y0 - 1, f.y0 + wh, 'wall');
+    // party wall down the side of the yard (one per plot, on its a0 edge; the row end gets both)
+    const sides = pl.k === B.nPlots - 1 ? [pl.a0, pl.a1] : [pl.a0];
+    for (const a of sides) {
+      const [sx, sz] = F.toW(a, dBack - depth / 2), sg = G(sx, sz), ry = Math.atan2(F.nx, F.nz);
+      batch.box(M.brick, sx, sg + wh / 2 - 0.3, sz, 0.22, wh + 0.6, depth, { tile: 1.3, color: col, ry, detail: true });
+      world.addOBB(sx, sz, 0.11, depth / 2, ry, sg - 1, sg + wh, 'wall');
+    }
+    // bins by the gate (outside, in the alley) or in the yard
+    if (R() < 0.55) for (let k = 0; k < 1 + (R() < 0.5 ? 1 : 0); k++) {
+      const out = room > depth * 2 + 1.2 ? 0.55 : -0.6;
+      f.box(M.plastic, -gx + (k - 0.5) * 0.7 + (gx > 0 ? -0.9 : 0.9), 0.53, out, 0.58, 1.06, 0.7, { color: BINS[(R() * BINS.length) | 0], detail: true });
+    }
   }
 }
 function lift(w, y) { return [w[0], y, w[1]]; }
@@ -341,6 +404,11 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
         for (const [a, b] of [[-W / 2, dx - 0.6], [dx + 0.6, W / 2]].map(([a, b]) => [Math.min(a, b), Math.max(a, b)])) {
           if (b - a < 0.2) continue;
           const gy = G(...F.toW(am + (a + b) / 2, B.dMax + z)) - pl.gF;
+          if (B.modern && pl.k % 3 !== 2) {
+            if (pl.k % 3 === 0) f.box(M.hedge, (a + b) / 2, gy + 0.55, z, b - a, 1.1, 0.7, { color: '#3f6b35', detail: true });       // privet hedge
+            else { for (let x = a + 0.1; x < b; x += 1.8) f.box(M.wood, x, gy + 0.45, z, 0.08, 0.9, 0.08, { color: '#6b5a44', detail: true }); f.box(M.wood, (a + b) / 2, gy + 0.6, z, b - a, 0.5, 0.03, { color: '#7a6850', detail: true }); } // low fence
+            continue;
+          }
           f.box(M.brick, (a + b) / 2, gy + 0.4, z, b - a, 0.8 + 0.6, 0.24, { tile: 1.3, color: tint, detail: true });
           f.box(M.stone, (a + b) / 2, gy + 0.85, z, b - a + 0.02, 0.1, 0.3, { color: '#c8bca6', detail: true });
         }

@@ -59,7 +59,7 @@ export class Car {
     const pts = [];
     const push = (r, forward) => {
       const S = forward ? r.samples : [...r.samples].reverse();
-      const lane = r.kind === 'r' ? Math.max(1.3, r.half * 0.5) : Math.min(2.6, r.half * 0.55);
+      const lane = r.kind === 'r' ? (r.width < 6.2 ? 0.5 : 0.35) : Math.min(2.6, r.half * 0.55); // residential: down the middle between parked cars
       for (let i = pts.length ? 1 : 0; i < S.length; i++) pts.push({ x: S[i].x, z: S[i].z, lane });
     };
     let total = 0;
@@ -200,7 +200,7 @@ export class Car {
 
     // --- place the model ---
     const gy = G(this.x, this.z);
-    const slope = (G(this.x + this.hx, this.z + this.hz) - G(this.x - this.hx, this.z - this.hz)) / 2;
+    const hl = this.dims.L * 0.35, slope = (G(this.x + this.hx * hl, this.z + this.hz * hl) - G(this.x - this.hx * hl, this.z - this.hz * hl)) / (2 * hl);
     this.car.position.set(this.x, gy, this.z);
     this.car.rotation.set(-Math.atan(slope), this.heading, 0);
     this.body.position.y = this.bounceY + 0.02;

@@ -340,16 +340,17 @@ function backYards(B, batch, M, world, net, R) {
     const gx = (R() < 0.5 ? -1 : 1) * (W / 2 - 0.9), gw = 0.95;
     const segs = [[-W / 2, gx - gw / 2], [gx + gw / 2, W / 2]];
     for (const [a, b] of segs) if (b - a > 0.1) {
-      f.box(M.brick, -(a + b) / 2, wh / 2 - 0.3, 0, b - a, wh + 0.6, 0.22, { tile: 1.3, color: col, detail: true });
-      f.box(M.stone, -(a + b) / 2, wh + 0.03, 0, b - a + 0.02, 0.08, 0.3, { color: '#b9ae9a', detail: true });
+      f.run(M.brick, -b, -a, 0, 0.22, -0.4, wh, { tile: 1.3, color: col, detail: true });
+      f.run(M.stone, -b - 0.01, -a + 0.01, 0, 0.3, wh - 0.01, wh + 0.07, { color: '#b9ae9a', detail: true });
     }
-    f.box(M.wood, -gx, wh * 0.45, -0.02, gw, wh * 0.9, 0.06, { color: ['#3d5a3a', '#5a3b2a', '#2f3e5c', '#6b6b6b'][(R() * 4) | 0], detail: true });
+    f.run(M.wood, -gx - gw / 2, -gx + gw / 2, -0.02, 0.06, 0.03, wh * 0.9, { color: ['#3d5a3a', '#5a3b2a', '#2f3e5c', '#6b6b6b'][(R() * 4) | 0], detail: true });
     const [wx, wz] = f.world(0, 0); world.addOBB(wx, wz, W / 2, 0.12, Math.atan2(-F.nx, -F.nz), f.y0 - 1, f.y0 + wh, 'wall');
     // party wall down the side of the yard (one per plot, on its a0 edge; the row end gets both)
     const sides = pl.k === B.nPlots - 1 ? [pl.a0, pl.a1] : [pl.a0];
     for (const a of sides) {
       const [sx, sz] = F.toW(a, dBack - depth / 2), sg = G(sx, sz), ry = Math.atan2(F.nx, F.nz);
-      batch.box(M.brick, sx, sg + wh / 2 - 0.3, sz, 0.22, wh + 0.6, depth, { tile: 1.3, color: col, ry, detail: true });
+      const [px0, pz0] = F.toW(a, dBack), [px1, pz1] = F.toW(a, dEnd), pg0 = G(px0, pz0), pg1 = G(px1, pz1);
+      batch.sloped(M.brick, px0, pz0, px1, pz1, 0.22, pg0 - 0.4, pg1 - 0.4, pg0 + wh, pg1 + wh, { tile: 1.3, color: col, detail: true });
       world.addOBB(sx, sz, 0.11, depth / 2, ry, sg - 1, sg + wh, 'wall');
     }
     // bins by the gate (outside, in the alley) or in the yard
@@ -419,14 +420,16 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
         }
         for (const [a, b] of [[-W / 2, dx - 0.6], [dx + 0.6, W / 2]].map(([a, b]) => [Math.min(a, b), Math.max(a, b)])) {
           if (b - a < 0.2) continue;
-          const gy = G(...F.toW(am + (a + b) / 2, B.dMax + z)) - pl.gF;
           if (B.modern && pl.k % 3 !== 2) {
-            if (pl.k % 3 === 0) f.box(M.hedge, (a + b) / 2, gy + 0.55, z, b - a, 1.1, 0.7, { color: '#3f6b35', detail: true });       // privet hedge
-            else { for (let x = a + 0.1; x < b; x += 1.8) f.box(M.wood, x, gy + 0.45, z, 0.08, 0.9, 0.08, { color: '#6b5a44', detail: true }); f.box(M.wood, (a + b) / 2, gy + 0.6, z, b - a, 0.5, 0.03, { color: '#7a6850', detail: true }); } // low fence
+            if (pl.k % 3 === 0) f.run(M.hedge, a, b, z, 0.7, -0.1, 1.1, { color: '#3f6b35', detail: true });       // privet hedge
+            else {                                                                                                // low fence
+              for (let x = a + 0.1; x < b; x += 1.8) f.run(M.wood, x - 0.04, x + 0.04, z, 0.08, -0.2, 0.9, { color: '#6b5a44', detail: true });
+              f.run(M.wood, a, b, z, 0.03, 0.35, 0.85, { color: '#7a6850', detail: true });
+            }
             continue;
           }
-          f.box(M.brick, (a + b) / 2, gy + 0.4, z, b - a, 0.8 + 0.6, 0.24, { tile: 1.3, color: tint, detail: true });
-          f.box(M.stone, (a + b) / 2, gy + 0.85, z, b - a + 0.02, 0.1, 0.3, { color: '#c8bca6', detail: true });
+          f.run(M.brick, a, b, z, 0.24, -0.35, 0.8, { tile: 1.3, color: tint, detail: true });
+          f.run(M.stone, a - 0.01, b + 0.01, z, 0.3, 0.8, 0.9, { color: '#c8bca6', detail: true });
         }
         if (R() < 0.5) { const bc = ['#2a2a2a', '#2d4f8c', '#6b4a2b', '#2f6b36'][(R() * 4) | 0]; f.box(M.plastic, 1.6 * m, 0.55, Math.min(z - 0.5, 1.2), 0.6, 1.05, 0.7, { color: bc, detail: true }); }
         if (R() < 0.2) f.box(M.hedge, 1.2 * m, 0.7, z - 0.3, 1.6, 1.2, 0.5, { color: '#3f6b35', detail: true });

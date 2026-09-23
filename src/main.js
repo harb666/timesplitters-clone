@@ -254,6 +254,7 @@ function boot() {
 
     // blinking crossing globes
     beaconT += dt;
+    map.signals?.update(dt);
     map.beaconMat.color.setHex(Math.floor(beaconT * 1.6) % 2 ? 0x552a08 : 0xffa020);
 
     // audio listener follows the camera

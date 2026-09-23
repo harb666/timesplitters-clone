@@ -103,6 +103,21 @@ export class StaticBatch {
     this.add(material, tiledBox(w, h, d, tile), { x, y, z, rx, ry, rz, color, detail });
   }
 
+  // Box running from (x0,z0) to (x1,z1), `t` thick, whose bottom and top
+  // edges slope independently (b0/b1, t0/t1 = heights at each end): walls,
+  // copings and kerbs that follow the ground instead of stepping.
+  sloped(material, x0, z0, x1, z1, t, b0, b1, t0, t1, { color, tile = 0, detail = false } = {}) {
+    const L = Math.hypot(x1 - x0, z1 - z0); if (L < 1e-3) return;
+    const g = tiledBox(t, ((t0 - b0) + (t1 - b1)) / 2, L, tile), P = g.attributes.position;
+    const ux = (x1 - x0) / L, uz = (z1 - z0) / L;
+    for (let i = 0; i < P.count; i++) {
+      const lx = P.getX(i), lz = P.getZ(i), k = lz / L + 0.5, top = P.getY(i) > 0;
+      P.setXYZ(i, x0 + ux * (k * L) + uz * lx, top ? t0 + (t1 - t0) * k : b0 + (b1 - b0) * k, z0 + uz * (k * L) - ux * lx);
+    }
+    g.computeVertexNormals();
+    this.add(material, g, { color, detail });
+  }
+
   build(parent) {
     const meshes = [];
     for (const grp of this.groups.values()) {

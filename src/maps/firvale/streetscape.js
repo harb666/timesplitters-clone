@@ -54,7 +54,6 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
   }
   const at = (pt, filter) => { const n = net.nearest(pt[0], pt[1], null, filter || ((r) => r.kind !== 'f')); return n; };
   const beacons = [];
-  const beaconGeo = () => new THREE.SphereGeometry(0.2, 10, 6);
   let shelters = 0;
   for (const it of osm.furniture) {
     const p = it.p;
@@ -75,43 +74,10 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
           world.addOBB(q.x, q.z, 1.9, 0.75, ry, gq - 1, gq + 2.6, 'shelter');
         }
         f.box(M.busFlag, 2.5, 2.6, 0.5, 0.6, 0.45, 0.04, { color: '#ffffff' }); f.box(M.galv, 2.5, 1.5, 0.5, 0.08, 3, 0.08, { color: '#888' });
-        // yellow BUS STOP box marking on the carriageway
-        const m0 = net.pointAt(r, n.s, side * (r.half - 1.2), {});
-        for (const [ds, w, l] of [[-7, 2.2, 0.15], [7, 2.2, 0.15]]) { const m1 = net.pointAt(r, n.s + ds, side * (r.half - 1.2), {}); batch.box(M.line, m1.x, G(m1.x, m1.z) + 0.1, m1.z, w, 0.02, l, { color: '#e6b81c', ry: Math.atan2(m1.tx, m1.tz) }); }
-        for (const o of [-1, 1]) for (let s = -7; s < 7; s += 2) { const m1 = net.pointAt(r, n.s + s + 1, side * (r.half - 1.2) + o * 1.05, {}); batch.box(M.line, m1.x, G(m1.x, m1.z) + 0.1, m1.z, 0.12, 0.02, 2, { color: '#e6b81c', ry: Math.atan2(m1.tx, m1.tz) }); }
-        void m0;
-      } else if (it.k === 'signal') {
-        const n = at(p, (r) => DRIVABLE.has(r.kind)); if (!n || n.dist > n.road.half + 3) continue;
-        for (const sd of [1, -1]) {
-          const q = net.pointAt(n.road, n.s - sd * 6, sd * (n.road.half + 0.6), {});
-          if (net.onCarriageway(q.x, q.z, null, 0.2) || onBuilding(q.x, q.z)) continue;
-          const f = new Frame(batch, q.x, q.z, Math.atan2(q.tx, q.tz) + (sd > 0 ? Math.PI : 0), G(q.x, q.z));
-          f.geo(M.darkMetal, new THREE.CylinderGeometry(0.07, 0.07, 3.6, 6), 0, 1.8, 0, { color: '#222' });
-          f.box(M.darkMetal, 0, 3.2, 0.15, 0.32, 0.95, 0.22, { color: '#1a1a1a' });
-          ['#ff2a1a', '#402a00', '#003a10'].forEach((c, i) => f.box(M.signalLens, 0, 3.5 - i * 0.3, 0.27, 0.18, 0.18, 0.03, { color: c }));
-          f.box(M.darkMetal, 0, 1.1, -0.12, 0.22, 0.32, 0.12, { color: '#dcdc50', detail: true });
-          world.addBox(q.x - 0.15, q.x + 0.15, f.y0 - 1, f.y0 + 3.6, q.z - 0.15, q.z + 0.15, 'pole');
-        }
-      } else if (it.k === 'crossing') {
-        const n = at(p, (r) => DRIVABLE.has(r.kind)); if (!n || n.dist > n.road.half + 1) continue;
-        const r = n.road, zebra = r.kind !== 'r' && R() < 0.6;
-        for (let o = -r.half + 0.5; o < r.half - 0.3; o += 1.0) {
-          const q = net.pointAt(r, n.s, o + 0.25, {});
-          if (zebra) batch.box(M.line, q.x, G(q.x, q.z) + 0.1, q.z, 0.5, 0.02, 3.2, { color: '#f4f4ee', ry: Math.atan2(q.tx, q.tz) + Math.PI / 2 });
-        }
-        if (!zebra) for (const ds of [-1.6, 1.6]) for (let o = -r.half + 0.3; o < r.half; o += 0.6) { const q = net.pointAt(r, n.s + ds, o, {}); batch.box(M.line, q.x, G(q.x, q.z) + 0.1, q.z, 0.3, 0.02, 0.1, { color: '#f4f4ee', ry: Math.atan2(q.tx, q.tz) }); }
-        // dropped kerbs + tactile paving
-        for (const sd of [1, -1]) {
-          const q = net.pointAt(r, n.s, sd * (r.half + 0.6), {});
-          batch.box(M.pave, q.x, G(q.x, q.z) + 0.17, q.z, 2.4, 0.02, 0.8, { color: zebra ? '#b8a07a' : '#b85a4a', ry: Math.atan2(q.tx, q.tz) + Math.PI / 2 });
-          if (zebra) {
-            const b = net.pointAt(r, n.s + 2.2, sd * (r.half + 0.45), {}), gb = G(b.x, b.z);
-            for (let i = 0; i < 6; i++) batch.box(M.plastic, b.x, gb + 0.25 + i * 0.45, b.z, 0.1, 0.45, 0.1, { color: i % 2 ? '#111' : '#f4f4f4' });
-            batch.add(beaconMat, beaconGeo(), { x: b.x, y: gb + 2.9, z: b.z });
-            world.addBox(b.x - 0.08, b.x + 0.08, gb - 1, gb + 2.9, b.z - 0.08, b.z + 0.08, 'pole');
-            beacons.push([b.x, gb + 2.9, b.z]);
-          }
-        }
+        // yellow bus stop box on the carriageway (hugs the road surface)
+        const lo = side * (r.half - 1.2), yl = 0.06;
+        for (const ds of [-7, 7]) net.decal(batch, M.line, r, n.s + ds - 0.075, n.s + ds + 0.075, lo, 2.2, yl, '#e6b81c');
+        for (const o of [-1, 1]) for (let s = -7; s < 7; s += 2) net.decal(batch, M.line, r, n.s + s, n.s + s + 2, lo + o * 1.05, 0.12, yl, '#e6b81c');
       } else if (it.k === 'bench') {
         const n = at(p); const ry = n ? Math.atan2(n.tx, n.tz) + Math.PI / 2 : 0;
         const f = new Frame(batch, x, z, ry, g);
@@ -137,9 +103,11 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
           const x0 = ax + (bx - ax) * k / steps, z0 = az + (bz - az) * k / steps, x1 = ax + (bx - ax) * (k + 1) / steps, z1 = az + (bz - az) * (k + 1) / steps;
           const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, l = L / steps, ry = Math.atan2(x1 - x0, z1 - z0), g = G(mx, mz);
           if (net.onCarriageway(mx, mz, null, 0.2)) continue;
-          if (it.k === 'wall') { batch.box(M.stone, mx, g + 0.5, mz, 0.35, 1.4, l + 0.05, { color: '#b9ad98', ry, tile: 1 }); batch.box(M.stone, mx, g + 1.24, mz, 0.42, 0.1, l + 0.05, { color: '#cfc3ad', ry, detail: true }); world.addOBB(mx, mz, 0.18, l / 2, ry, g - 1, g + 1.2, 'wall'); }
-          else if (it.k === 'fence') { batch.box(M.fence, mx, g + 0.9, mz, 0.05, 1.8, l, { color: '#3d4a44', ry }); world.addOBB(mx, mz, 0.05, l / 2, ry, g - 1, g + 1.8, 'fence'); }
-          else { batch.box(M.hedge, mx, g + 0.65, mz, 0.9, 1.5, l + 0.2, { color: '#3f6b35', ry }); world.addOBB(mx, mz, 0.45, l / 2, ry, g - 1, g + 1.3, 'hedge'); }
+          // pieces follow the slope of the ground (tops parallel to it, no steps or gaps)
+          const g0 = G(x0, z0), g1 = G(x1, z1);
+          if (it.k === 'wall') { batch.sloped(M.stone, x0, z0, x1, z1, 0.35, g0 - 0.4, g1 - 0.4, g0 + 1.19, g1 + 1.19, { color: '#b9ad98', tile: 1 }); batch.sloped(M.stone, x0, z0, x1, z1, 0.42, g0 + 1.19, g1 + 1.19, g0 + 1.29, g1 + 1.29, { color: '#cfc3ad', detail: true }); world.addOBB(mx, mz, 0.18, l / 2, ry, g - 1, g + 1.2, 'wall'); }
+          else if (it.k === 'fence') { batch.sloped(M.fence, x0, z0, x1, z1, 0.05, g0 - 0.1, g1 - 0.1, g0 + 1.8, g1 + 1.8, { color: '#3d4a44' }); world.addOBB(mx, mz, 0.05, l / 2, ry, g - 1, g + 1.8, 'fence'); }
+          else { batch.sloped(M.hedge, x0, z0, x1, z1, 0.9, g0 - 0.2, g1 - 0.2, g0 + 1.4, g1 + 1.4, { color: '#3f6b35' }); world.addOBB(mx, mz, 0.45, l / 2, ry, g - 1, g + 1.3, 'hedge'); }
         }
       }
     }
@@ -169,9 +137,17 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
       world.addBox(p.x - 0.14, p.x + 0.14, g - 1, g + H, p.z - 0.14, p.z + 0.14, 'pole');
       poles.push({ x: p.x, y: g + H - 0.3, z: p.z, tx: p.tx, tz: p.tz });
       // drop wires to a few house fronts on both sides
+      // (only where the wire really reaches a house wall: it ends on a bracket under the eaves)
       for (const dside of [side, -side]) if (R() < 0.7) {
-        const q = net.pointAt(r, s + (R() - 0.5) * 12, dside * (r.half + r.pave + 1.2), {});
-        wire(p.x, g + H - 0.4, p.z, q.x, G(q.x, q.z) + 5.6, q.z, 0.25);
+        const a = (R() - 0.5) * 0.9, nx = p.tz * dside, nz = -p.tx * dside;
+        const dx = nx * Math.cos(a) + p.tx * Math.sin(a), dz = nz * Math.cos(a) + p.tz * Math.sin(a);
+        const hit = world.raycastBoxes(p.x, g + 5, p.z, dx, 0, dz, 24);
+        if (!hit.box || hit.box.tag !== 'building' || hit.dist < 2) continue;
+        const hx = p.x + dx * (hit.dist - 0.04), hz = p.z + dz * (hit.dist - 0.04);
+        const hy = Math.min(hit.box.maxY - 0.6, G(hx, hz) + 5.3);
+        if (hy < g + 3) continue;
+        wire(p.x, g + H - 0.4, p.z, hx, hy, hz, 0.2);
+        batch.box(M.darkMetal, hx - dx * 0.05, hy - 0.03, hz - dz * 0.05, 0.06, 0.12, 0.1, { color: '#222', ry: Math.atan2(dx, dz), detail: true });
       }
     }
     for (let i = 0; i + 1 < poles.length; i++) {
@@ -223,7 +199,7 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
   return { trees, woods, beacons };
 }
 const _near = [];
-function inBox(b, x, z, pad) {
+export function inBox(b, x, z, pad) {
   if (!b.rot) return x > b.minX - pad && x < b.maxX + pad && z > b.minZ - pad && z < b.maxZ + pad;
   const dx = x - b.cx, dz = z - b.cz, lx = dx * b.c - dz * b.s, lz = dx * b.s + dz * b.c;
   return Math.abs(lx) < b.hw + pad && Math.abs(lz) < b.hd + pad;

@@ -18,6 +18,7 @@ import { buildFootprints } from './firvale/footprints.js';
 import { buildChurch } from './firvale/landmarks.js';
 import { buildStreetscape, plantTrees, parkCars, parkLots, setFleet } from './firvale/streetscape.js';
 import { ParkedFleet } from '../models/vehicles.js';
+import { buildCrossings, SIGNALS } from './firvale/crossings.js';
 import { landMask, groundMaterial, buildGround, buildFarTerrain } from './firvale/terrain.js';
 import { inPoly, flatToPts, centroid } from './firvale/geom.js';
 
@@ -102,6 +103,8 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   const BOUNDS = OSM.bounds;
   const interactables = [], props = [];
   const net = new RoadNetwork(OSM.roads);
+  // controlled crossings get zig-zags instead of yellow lines / centre dashes
+  net.xings = OSM.furniture.filter((f) => f.k === 'crossing' && (f.t === 'zeb' || f.t === 'sig')).map((f) => f.p);
 
   // ---- special sites from the land-use map ----
   const hospPolys = OSM.landuse.filter((l) => l.k === 'hospital').map((l) => flatToPts(l.p));
@@ -138,6 +141,8 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
 
   // ---- street furniture, trees, parked cars ----
   const scape = buildStreetscape(batch, M, world, net, OSM, beaconMat);
+  const xings = buildCrossings(batch, M, world, net, OSM, beaconMat);
+  scape.beacons.push(...xings.beacons);
   plantTrees(batch, M, world, scape.trees);
   plantTrees(batch, M, world, scape.woods, true);
   const junctions = [...net.nodes.values()].filter((n) => n.roads.length >= 3).map((n) => { const e = n.roads[0], S = e.road.samples, p = e.end === 'a' ? S[0] : S[S.length - 1]; return [p.x, p.z]; });
@@ -248,7 +253,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   return {
     spawn,
     startShop: { x: mm.front[0], zc: mm.front[1], y: mm.gF },
-    interactables, props, beaconMat, meshCount: meshes.length,
+    interactables, props, beaconMat, signals: SIGNALS, meshCount: meshes.length,
     surfaceAt, net, dezPath, updateLOD, cansAt, churchAt: churchB ? [churchB.o.cx, churchB.o.cz] : null,
     bounds: BOUNDS, shopSpots: fp.shopSpots, buildings: fp.list, landuse: OSM.landuse, junctions, nearJunction,
   };

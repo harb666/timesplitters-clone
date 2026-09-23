@@ -2,6 +2,7 @@
 // left (UK rules), queue behind each other, slow for the junction and
 // bends, change gear, show off with pops & bangs, honk, and join/leave the
 // map at its edges.
+import { SIGNALS } from '../maps/firvale/crossings.js';
 import * as THREE from 'three';
 import { buildFalconR } from '../models/falconR.js';
 import { buildVehicle } from '../models/vehicles.js';
@@ -136,6 +137,15 @@ export class Car {
     // slow on tight bends ahead
     { const a = this.sample(this.s + 6, {}), b = this.sample(this.s + 14, {}); this.sample(this.s, {}); const turn = Math.abs(a.tx * b.tz - a.tz * b.tx); if (turn > 0.15) want = Math.min(want, 9); }
 
+    // traffic lights: stop at the line on red / red+amber, and on amber if there's room
+    for (const st of SIGNALS.stops) {
+      const dx = st.x - this.x, dz = st.z - this.z;
+      if (dx * dx + dz * dz > 45 * 45 || st.hx * this.hx + st.hz * this.hz < 0.75) continue;
+      const fa = dx * this.hx + dz * this.hz - this.dims.L / 2 - 0.6, la = Math.abs(dx * this.hz - dz * this.hx);
+      if (la > 3.5 || fa < -0.5) continue;
+      const a = SIGNALS.aspect(st.g);
+      if (a === 'r' || a === 'ra' || (a === 'a' && fa > this.speed * this.speed / 12 + 1)) want = Math.min(want, Math.max(0, fa * 0.7));
+    }
     // obstacle: the player in our lane ahead
     const dxp = player.pos.x - this.x, dzp = player.pos.z - this.z;
     const ahead = dxp * this.hx + dzp * this.hz, lat = Math.abs(dxp * this.hz - dzp * this.hx);

@@ -18,6 +18,7 @@ const CLS = {
   cycleway: { kind: 'f', w: 2, pave: 0 }, steps: { kind: 'f', w: 2, pave: 0 }, pedestrian: { kind: 'f', w: 3.5, pave: 0 },
 };
 const RANK = { f: 0, s: 1, r: 2, b: 3, a: 4 };
+export { RANK };
 export const DRIVABLE = new Set(['a', 'b', 'r']);
 
 // flat 2-triangle strip (w across, l along +Z), facing up
@@ -196,14 +197,14 @@ export class RoadNetwork {
     if (r.kind === 'f' || r.length < 12) return;
     let seed = r.id * 9301 + 49297; const R = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
     const lift = 0.02 + RANK[r.kind] * 0.012 + 0.012;
-    const put = (mat, s, off, w, l, color, rot = 0) => {
+    const put = (mat, s, off, w, l, color) => {
       const p = this.pointAt(r, s, off, {});
       if (this.onCarriageway(p.x, p.z, r, -0.3)) return;
-      batch.add(mat, flat(w, l), { x: p.x, y: G(p.x, p.z) + lift, z: p.z, color, ry: Math.atan2(p.tx, p.tz) + rot, detail: true });
+      this.decal(batch, mat, r, s - l / 2, s + l / 2, off, w, lift, color, true);
     };
     if (r.pave > 0) for (let s = 8 + R() * 10; s < r.length - 4; s += 22 + R() * 14) for (const side of [1, -1]) put(M.metal, s + side * 3, side * (r.half - 0.28), 0.42, 0.6, '#2b2d30');
     for (let s = 20 + R() * 30; s < r.length - 5; s += 45 + R() * 50) {
-      const off = (R() - 0.5) * r.half; if (R() < 0.6) put(M.metal, s, off, 0.7, 0.7, '#3a3c3f', R() * 3); else put(M.metal, s, off, 0.6, 0.9, '#3a3c3f');
+      const off = (R() - 0.5) * r.half; if (R() < 0.6) put(M.metal, s, off, 0.7, 0.7, '#3a3c3f'); else put(M.metal, s, off, 0.6, 0.9, '#3a3c3f');
     }
     for (let s = 15 + R() * 40; s < r.length - 5; s += 35 + R() * 70) { const w = 1 + R() * 2.2, l = 1.2 + R() * 4; put(M.road, s, (R() - 0.5) * (r.half * 2 - w), w, l, R() < 0.5 ? '#6f6f6f' : '#9a9a9a'); }
   }
@@ -240,17 +241,44 @@ export class RoadNetwork {
       const a = S[i], b = S[i + 1];
       const x = (a.x + b.x) / 2 + a.tz * o, z = (a.z + b.z) / 2 - a.tx * o;
       if (keep && !keep(x, z)) continue;
-      const len = Math.hypot(b.x - a.x, b.z - a.z) + 0.05;
-      batch.box(mat, x, G(x, z) + 0.06, z, 0.22, 0.3, len, { color: '#c9c4b8', tile: 1, ry: Math.atan2(a.tx, a.tz) });
+      const ax = a.x + a.tz * o, az = a.z - a.tx * o, bx = b.x + b.tz * o, bz = b.z - b.tx * o, ga = G(ax, az), gb = G(bx, bz);
+      batch.sloped(mat, ax, az, bx, bz, 0.22, ga - 0.09, gb - 0.09, ga + 0.21, gb + 0.21, { color: '#c9c4b8', tile: 1 });
     }
+  }
+
+  // Height of the carriageway surface itself (exactly as the road ribbon
+  // triangulates it) at distance s along the road, `off` metres to the left.
+  surfY(r, s, off) {
+    const S = r.samples; s = Math.max(0, Math.min(r.length, s));
+    let i = Math.min(S.length - 2, Math.floor(s / r.length * (S.length - 1)));
+    while (i > 0 && S[i].s > s) i--; while (i < S.length - 2 && S[i + 1].s < s) i++;
+    const a = S[i], b = S[i + 1], k = Math.max(0, Math.min(1, (s - a.s) / Math.max(1e-6, b.s - a.s)));
+    const h = (p, o) => G(p.x + p.tz * o, p.z - p.tx * o);
+    const aL = h(a, -r.half), aR = h(a, r.half), bL = h(b, -r.half), bR = h(b, r.half);
+    const u = Math.max(0, Math.min(1, (off + r.half) / (2 * r.half)));
+    return u + k <= 1 ? aL + u * (aR - aL) + k * (bL - aL) : bR + (1 - u) * (bL - bR) + (1 - k) * (aR - bR);
+  }
+  // A paint mark / cover lying on the carriageway: from s0 to s1 along the
+  // road at lateral offset `off`, w wide; split so it hugs the surface.
+  // (off1: lateral offset at s1, for slanted marks like zig-zags)
+  decal(batch, mat, r, s0, s1, off, w, lift, color, detail = false, off1 = off) {
+    const n = Math.max(1, Math.ceil(Math.abs(s1 - s0) / 1.5)), pos = [], uv = [], idx = [], P = {};
+    for (let j = 0; j <= n; j++) {
+      const s = s0 + (s1 - s0) * j / n, o = off + (off1 - off) * j / n;
+      for (const e of [-w / 2, w / 2]) { this.pointAt(r, s, o + e, P); pos.push(P.x, this.surfY(r, s, o + e) + lift, P.z); uv.push(e > 0 ? 1 : 0, j / n); }
+    }
+    for (let j = 0; j < n; j++) { const v = j * 2; idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
+    if (g.attributes.normal.array[1] < 0) { const I = g.index.array; for (let i = 0; i < I.length; i += 3) { const t = I[i + 1]; I[i + 1] = I[i + 2]; I[i + 2] = t; } g.computeVertexNormals(); }
+    batch.add(mat, g, { color, detail });
   }
 
   markings(batch, mat, r) {
     const put = (s0, s1, off, w, color, lift = 0.045) => {
       const A = this.pointAt(r, s0, off, {}), B = this.pointAt(r, s1, off, {});
       if (this.onCarriageway((A.x + B.x) / 2, (A.z + B.z) / 2, r, -0.2)) return; // not across junctions
-      const mx = (A.x + B.x) / 2, mz = (A.z + B.z) / 2, len = Math.hypot(B.x - A.x, B.z - A.z);
-      batch.add(mat, flat(w, len), { x: mx, y: G(mx, mz) + lift + RANK[r.kind] * 0.012 + 0.01, z: mz, color, ry: Math.atan2(A.tx, A.tz) });
+      if (this.xings && this.xings.some(([x, z]) => (A.x - x) ** 2 + (A.z - z) ** 2 < 400)) return; // zig-zag zone of a crossing
+      this.decal(batch, mat, r, s0, s1, off, w, 0.02 + RANK[r.kind] * 0.012 + 0.012, color);
     };
     // centre line: long dashes on main roads, short on wide residential streets
     if (r.kind !== 'r' || r.width >= 7) {
@@ -267,10 +295,7 @@ export class RoadNetwork {
       const n = this.nearest(p.x, p.z, r, (o) => o.kind !== 'f' && o.kind !== 's');
       if (!n || n.dist > n.road.half + 2 || RANK[n.road.kind] < RANK[r.kind]) continue;
       const back = end ? r.length - (n.dist < n.road.half ? n.road.half - n.dist : 0) - 1.5 : (n.dist < n.road.half ? n.road.half - n.dist : 0) + 1.5;
-      for (let o = -r.half + 0.6; o < 0; o += 1.2) {
-        const A = this.pointAt(r, back + (end ? -n.road.half : n.road.half) * 0.0, o + 0.3, {});
-        batch.add(mat, flat(0.6, 0.2), { x: A.x, y: G(A.x, A.z) + 0.055 + RANK[r.kind] * 0.012, z: A.z, color: '#f1f0e8', ry: Math.atan2(A.tx, A.tz) });
-      }
+      for (let o = -r.half + 0.6; o < 0; o += 1.2) this.decal(batch, mat, r, back - 0.1, back + 0.1, o + 0.3, 0.6, 0.02 + RANK[r.kind] * 0.012 + 0.014, '#f1f0e8');
     }
   }
 }

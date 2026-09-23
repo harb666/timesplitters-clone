@@ -200,7 +200,12 @@ for r in rows('infra'):
     if not k: continue
     g = tolocal(W.loads(r['geometry'])).intersection(area)
     if g.is_empty: continue
-    if g.geom_type == 'Point': furn.append(dict(k=k, p=[rd(g.x), rd(g.y)]))
+    if g.geom_type == 'Point':
+        e = dict(k=k, p=[rd(g.x), rd(g.y)])
+        if k == 'crossing':   # real crossing type: signal-controlled (pelican/puffin/toucan), zebra, or plain dropped kerb
+            st = dict(r.get('source_tags') or {}); vals = ' '.join(str(st.get(t, '')) for t in ('crossing', 'crossing_ref', 'crossing:markings', 'crossing:signals'))
+            e['t'] = 'sig' if ('traffic_signals' in vals or 'pelican' in vals or 'toucan' in vals or 'puffin' in vals or st.get('crossing:signals') == 'yes') else 'zeb' if 'zebra' in vals else 'mk' if 'marked' in vals.split() or st.get('crossing:markings') == 'yes' else 'unm'
+        furn.append(e)
     elif g.geom_type in ('LineString', 'MultiLineString'):
         for q in ([g] if g.geom_type == 'LineString' else g.geoms): furn.append(dict(k=k, p=flat(list(q.simplify(0.3).coords))))
     elif k == 'parking':

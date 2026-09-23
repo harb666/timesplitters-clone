@@ -22,6 +22,17 @@ export class Frame {
     this.batch.add(mat, g, { color, detail });
   }
   box(mat, lx, ly, lz, w, h, d, o = {}) { this.geo(mat, tiledBox(w, h, d, o.tile ?? 0), lx, ly, lz, o); }
+  // wall/coping running along local X (a..b) at local z, t thick, from
+  // ground+lo to ground+hi at each end: follows the slope of the ground
+  run(mat, a, b, lz, t, lo, hi, o = {}) {
+    const [x0, z0] = this.world(a, lz), [x1, z1] = this.world(b, lz), g0 = G(x0, z0), g1 = G(x1, z1);
+    this.batch.sloped(mat, x0, z0, x1, z1, t, g0 + lo, g1 + lo, g0 + hi, g1 + hi, o);
+  }
+  // same, running along local Z (z0..z1) at local x
+  runZ(mat, lx, za, zb, t, lo, hi, o = {}) {
+    const [x0, z0] = this.world(lx, za), [x1, z1] = this.world(lx, zb), g0 = G(x0, z0), g1 = G(x1, z1);
+    this.batch.sloped(mat, x0, z0, x1, z1, t, g0 + lo, g1 + lo, g0 + hi, g1 + hi, o);
+  }
 }
 
 // ---------------------------------------------------------------- textures

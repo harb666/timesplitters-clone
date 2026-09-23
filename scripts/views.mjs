@@ -34,10 +34,14 @@ for (const [name, v] of views) {
       const kind = v.person, q = g.crowd.people.filter((o) => o.kind === kind)[v.i || 0];
       const a = q.yawS + (v.ang || 0), x = q.x + Math.sin(a) * (v.d || 4), z = q.z + Math.cos(a) * (v.d || 4);
       p.spawn(x, z, Math.atan2(x - q.x, z - q.z));
+    } else if (v && v.xing) {
+      const net = g.map.net, n = net.nearest(v.xing[0], v.xing[1], null, (r) => r.kind !== 'f');
+      const q = net.pointAt(n.road, n.s - (v.d ?? 14), v.off ?? (n.road.half + 1.2), {}), c = net.pointAt(n.road, n.s, 0, {});
+      p.spawn(q.x, q.z, Math.atan2(q.x - c.x, q.z - c.z));
     } else if (v && v.road) {
       const r = g.map.net.longest(v.road), pt = g.map.net.pointAt(r, r.length * (v.t ?? 0.5), v.off ?? 0, {});
       p.spawn(pt.x, pt.z, Math.atan2(-pt.tx, -pt.tz) + (v.back ? Math.PI : 0));
-    } else if (v && v.x !== undefined) p.spawn(v.x, v.z, v.yaw ?? 0); else p.spawn(g.map.spawn.x, g.map.spawn.z, g.map.spawn.yaw);
+    } else if (v && v.x !== undefined) p.spawn(v.x, v.z, v.tx !== undefined ? Math.atan2(v.x - v.tx, v.z - v.tz) : (v.yaw ?? 0)); else p.spawn(g.map.spawn.x, g.map.spawn.z, g.map.spawn.yaw);
     if (v && v.turn) p.yaw += v.turn;
     if (v && v.pitch !== undefined) p.pitch = v.pitch;
     if (v && v.up) p.pos.y += v.up;

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <title>Fir Vale FPS</title>
+  <meta name="description" content="An original stylised arcade FPS set in a fictional Fir Vale, Sheffield. Prototype build.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Fir Vale">
+  <meta name="theme-color" content="#14161c">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icon-180.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="src/ui/styles.css">
+  <script type="importmap">
+    { "imports": { "three": "./src/lib/three.module.min.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- ===== HUD ===== -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"><span></span><span></span><span></span><span></span></div>
+    <div id="hitmarker"></div>
+    <div id="damage-flash"></div>
+
+    <div id="topbar">
+      <div id="mission-card">
+        <div id="mission-title">Welcome to Fir Vale</div>
+        <div id="objective">Explore the street</div>
+      </div>
+      <div id="score">0</div>
+      <button id="btn-settings" class="round small" aria-label="Settings">⚙</button>
+    </div>
+
+    <canvas id="minimap" width="140" height="140"></canvas>
+
+    <div id="vitals">
+      <div class="bar"><div class="bar-label">HP</div><div class="bar-track"><div id="hp-fill" class="bar-fill hp"></div></div><div id="hp-num">100</div></div>
+      <div class="bar"><div class="bar-label">AR</div><div class="bar-track"><div id="ar-fill" class="bar-fill ar"></div></div><div id="ar-num">25</div></div>
+    </div>
+
+    <div id="ammo-box">
+      <div id="weapon-name">VK-9 KESTREL</div>
+      <div><span id="ammo-mag">30</span><span id="ammo-sep">/</span><span id="ammo-reserve">150</span></div>
+    </div>
+
+    <div id="subtitle"></div>
+    <div id="prompt"></div>
+    <div id="toast"></div>
+    <div id="bubbles"></div>
+
+    <!-- Touch controls -->
+    <div id="touch" class="hidden">
+      <div id="stick-zone"></div>
+      <div id="look-zone"></div>
+      <div id="stick"><div id="stick-knob"></div></div>
+      <div id="buttons">
+        <button id="btn-fire" class="round big" aria-label="Fire">FIRE</button>
+        <button id="btn-jump" class="round" aria-label="Jump">JUMP</button>
+        <button id="btn-reload" class="round" aria-label="Reload">R</button>
+        <button id="btn-switch" class="round" aria-label="Switch weapon">⇄</button>
+        <button id="btn-use" class="round" aria-label="Interact">USE</button>
+        <button id="btn-aim" class="round" aria-label="Aim down sights">AIM</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Title screen ===== -->
+  <div id="title" class="panel-screen">
+    <div class="title-inner">
+      <div class="logo">FIR VALE</div>
+      <div class="tagline">A totally fictional bit of Sheffield. Prototype 0.3</div>
+      <button id="btn-start" class="cta">TAP TO PLAY</button>
+      <div id="loading">Loading…</div>
+      <div class="hint">Turn your phone sideways. Sound on! 🔊</div>
+      <div class="hint desktop-only">Desktop: WASD move · Shift sprint · mouse look · left click fire · right click aim · R reload · V inspect · Q switch · E use · Space jump</div>
+    </div>
+  </div>
+
+  <!-- ===== Settings ===== -->
+  <div id="settings" class="panel-screen hidden">
+    <div class="settings-inner">
+      <h2>Settings</h2>
+      <label>Look sensitivity <input id="set-sens" type="range" min="0.3" max="3" step="0.05"><output id="set-sens-out"></output></label>
+      <label class="check"><input id="set-aimassist" type="checkbox"> Aim assist</label>
+      <label class="check"><input id="set-autofire" type="checkbox"> Auto-fire when on target</label>
+      <label class="check"><input id="set-gyro" type="checkbox"> Gyro aiming (tilt phone)</label>
+      <label class="check"><input id="set-lefty" type="checkbox"> Left-handed layout</label>
+      <label class="check"><input id="set-invert" type="checkbox"> Invert look up/down</label>
+      <label>Graphics quality
+        <select id="set-quality">
+          <option value="low">Low (fastest)</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </label>
+      <label>Volume <input id="set-volume" type="range" min="0" max="1" step="0.05"></label>
+      <button id="btn-close-settings" class="cta">BACK TO GAME</button>
+    </div>
+  </div>
+
+  <div id="rotate-hint">↻ Turn your phone sideways for the best view</div>
+  <div id="fatal" class="hidden"></div>
+
+  <script type="module" src="src/main.js"></script>
+  <script>
+    // If the game code never starts (old browser, blocked files), say so
+    // instead of sitting on "Loading…" forever.
+    setTimeout(function () {
+      var l = document.getElementById('loading');
+      if (l && l.textContent === 'Loading…') l.textContent = 'The game files did not load. Check your connection and refresh. (iOS 16.4 or newer is needed.)';
+    }, 12000);
+  </script>
+</body>
+</html>

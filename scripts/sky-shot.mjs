@@ -1,0 +1,11 @@
+import { serve } from './serve.mjs';
+const { chromium } = await import('/opt/node22/lib/node_modules/playwright/index.mjs');
+const server = await serve(8769);
+const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const p = await b.newPage({ viewport: { width: 1200, height: 400 } });
+p.on('console', (m) => console.log(m.text().slice(0, 300))); p.on('pageerror', (e) => console.log('ERR', e.message));
+const t = Date.now();
+await p.goto('http://localhost:8769/scripts/sky-preview.html' + (process.argv[2] || ''));
+await p.waitForFunction(() => window.done, null, { timeout: 600000 });
+console.log('ms', Date.now() - t, await p.evaluate(() => window.horizon));
+await p.screenshot({ path: 'scripts/out/sky.png' }); await b.close(); server.close();

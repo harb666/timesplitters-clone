@@ -1,4 +1,4 @@
-// Traffic AI. Cars follow real routes through the Fir Vale junction on the
+// Traffic AI. Cars drive the real Fir Vale street graph on the
 // left (UK rules), queue behind each other, slow for the junction and
 // bends, change gear, show off with pops & bangs, honk, and join/leave the
 // map at its edges.
@@ -18,8 +18,8 @@ const DRIVER_LINES = {
 };
 
 export class Car {
-  constructor(scene, world, { net, routes, paint, plate, speedBias = 0, hud, start = 0.3, others } = {}) {
-    this.scene = scene; this.world = world; this.hud = hud; this.net = net; this.routes = routes; this.others = others || [];
+  constructor(scene, world, { net, paint, plate, speedBias = 0, hud, start = 0.3, others, focus } = {}) {
+    this.scene = scene; this.world = world; this.hud = hud; this.net = net; this.others = others || []; this.focus = focus;
     const m = buildFalconR({ paint, plate });
     Object.assign(this, m);
     this.car.rotation.order = 'YXZ';
@@ -42,24 +42,47 @@ export class Car {
     this.place();
   }
 
-  // Build a drivable path from road keys ('Name#k', '~' = reversed).
+  // Build a drive through the real street graph: start on a street a
+  // little way from the player, and at every junction pick the next street
+  // (main roads preferred, no U-turns, mostly straight on).
   pickRoute(start = 0) {
-    const keys = this.routes[(Math.random() * this.routes.length) | 0];
-    const rev = Math.random() < 0.5;
-    let pts = [];
-    for (const k0 of keys) {
-      const flip = k0.endsWith('~'), key = flip ? k0.slice(0, -1) : k0;
-      const r = this.net.byKey(key); if (!r) continue;
-      let seg = r.samples.map((p) => ({ x: p.x, z: p.z }));
-      if (flip) seg.reverse();
-      if (pts.length) seg = seg.slice(1);
-      pts = pts.concat(seg);
+    const net = this.net, focus = this.focus;
+    const W = { a: 6, b: 3, r: 0.6 };
+    const cands = net.roads.filter((r) => W[r.kind] && r.length > 15 && (r.kind !== 'r' || r.width >= 5.6));
+    const dist = (r) => { if (!focus) return 200; const m = r.samples[r.samples.length >> 1]; return Math.hypot(m.x - focus.x, m.z - focus.z); };
+    const pickW = (list, w) => { let t = 0; for (const x of list) t += w(x); let u = Math.random() * t; for (const x of list) { u -= w(x); if (u <= 0) return x; } return list[list.length - 1]; };
+    let road = pickW(cands, (r) => W[r.kind] * (dist(r) > 90 && dist(r) < 380 ? 1 : 0.05));
+    let fwd = Math.random() < 0.5;
+    const pts = [];
+    const push = (r, forward) => {
+      const S = forward ? r.samples : [...r.samples].reverse();
+      const lane = r.kind === 'r' ? Math.max(1.3, r.half * 0.5) : Math.min(2.6, r.half * 0.55);
+      for (let i = pts.length ? 1 : 0; i < S.length; i++) pts.push({ x: S[i].x, z: S[i].z, lane });
+    };
+    let total = 0;
+    for (let hop = 0; hop < 30 && total < 1100; hop++) {
+      push(road, fwd); total += road.length;
+      const endNode = fwd ? road.b : road.a;
+      const node = endNode !== undefined ? net.nodes.get(endNode) : null;
+      if (!node) break;
+      const last = pts[pts.length - 1], prev = pts[Math.max(0, pts.length - 4)];
+      pts[pts.length - 1].j = node.roads.length >= 3;
+      let hx = last.x - prev.x, hz = last.z - prev.z; const hl = Math.hypot(hx, hz) || 1; hx /= hl; hz /= hl;
+      const opts = node.roads.filter((e) => e.road !== road && W[e.road.kind] && (e.road.kind !== 'r' || e.road.width >= 5.6)).map((e) => {
+        const S = e.road.samples, forward = e.end === 'a', q = forward ? S[Math.min(3, S.length - 1)] : S[Math.max(0, S.length - 4)];
+        let dx = q.x - last.x, dz = q.z - last.z; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
+        const straight = dx * hx + dz * hz;
+        return { e, forward, w: W[e.road.kind] * (straight > 0.6 ? 3 : straight > -0.3 ? 1 : 0.05) * (e.road.name && e.road.name === road.name ? 2.5 : 1) };
+      });
+      if (!opts.length) break;
+      const o = pickW(opts, (x) => x.w);
+      road = o.e.road; fwd = o.forward;
     }
-    if (rev) pts.reverse();
     let acc = 0; pts[0].s = 0;
     for (let i = 1; i < pts.length; i++) { acc += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z); pts[i].s = acc; }
-    this.path = pts; this.pathLen = acc; this.s = start * acc; this.seg = 0;
-    this.lane = 2.4;
+    this.path = pts; this.pathLen = acc; this.s = start * Math.min(acc, 200); this.seg = 0;
+    this.lane = pts[0].lane;
+    this.nextJ = 0;
   }
 
   // Position on the path at arc length s, in the left-hand lane.
@@ -71,7 +94,8 @@ export class Car {
     this.seg = i;
     const a = P[i], b = P[i + 1], k = Math.max(0, Math.min(1, (s - a.s) / Math.max(1e-6, b.s - a.s)));
     let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
-    out.x = a.x + (b.x - a.x) * k + tz * this.lane; out.z = a.z + (b.z - a.z) * k - tx * this.lane; out.tx = tx; out.tz = tz;
+    const lane = a.lane + (b.lane - a.lane) * k;
+    out.x = a.x + (b.x - a.x) * k + tz * lane; out.z = a.z + (b.z - a.z) * k - tx * lane; out.tx = tx; out.tz = tz;
     return out;
   }
 
@@ -103,8 +127,9 @@ export class Car {
     this.showOffTimer -= dt;
     if (this.showOffTimer <= 0) { this.showOff = 2 + Math.random() * 1.5; this.showOffTimer = 9 + Math.random() * 10; }
     if (this.showOff > 0) { this.showOff -= dt; want = 22; if (this.showOff <= 0) this.liftOff = 1.2; }
-    // slow for the Fir Vale junction
-    if (junction) { const dj = Math.hypot(this.x - junction[0], this.z - junction[1]); if (dj < 35) want = Math.min(want, 6 + dj * 0.2); }
+    // slow for junctions ahead on the route
+    { const P = this.path; let i = this.seg; while (i < P.length - 1 && P[i].s < this.s + 30) { if (P[i].j && P[i].s > this.s - 4) { want = Math.min(want, 5.5 + Math.max(0, P[i].s - this.s) * 0.35); break; } i++; } }
+    if (this.path[this.seg] && this.path[this.seg].lane < 2) want = Math.min(want, 9); // back streets
     // slow on tight bends ahead
     { const a = this.sample(this.s + 6, {}), b = this.sample(this.s + 14, {}); this.sample(this.s, {}); const turn = Math.abs(a.tx * b.tz - a.tz * b.tx); if (turn > 0.15) want = Math.min(want, 9); }
 

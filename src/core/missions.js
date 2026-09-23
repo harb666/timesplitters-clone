@@ -12,7 +12,8 @@ export function missionWelcome(game) {
     steps: [
       { text: () => 'Have a look around. Move with the left stick, look with the right side.', done: () => game.stats.moved > 12, intro: '<b>Welcome to Fir Vale!</b> You\'re on Page Hall Road. The minimap (top left) shows the real streets.' },
       { text: () => 'Talk to <b>Dez</b> — the lad in the racing chair doing laps of the Page Hall Road shops (USE)', done: () => game.stats.talkedToDez },
-      { text: () => `Knock the cans off the wall outside Fir Vale School on Owler Lane (${cans()}/${canTotal()})`, done: () => cans() >= canTotal(), intro: 'Someone\'s lined tins up on the wall outside Fir Vale School, down Rushby Street on Owler Lane. Rude not to.' },
+      { text: () => `Say hello to some locals — walk up to anyone and press USE (${Math.min(2, game.stats.talkedToLocals || 0)}/2)`, done: () => (game.stats.talkedToLocals || 0) >= 2, intro: 'Page Hall\'s a friendly place: Slovak, Ukrainian, Polish, Pakistani, Yemeni and Sheffield-born neighbours. Say hello.' },
+      { text: () => `Knock the cans off the wall outside Fir Vale School on Owler Lane (${cans()}/${canTotal()})`, done: () => cans() >= canTotal(), intro: 'Someone\'s lined tins up on the wall outside Fir Vale School, on Owler Lane — follow the minimap. Rude not to.' },
       { text: () => `Flatten the cones at the Owler Lane roadworks (${roadCones()}/${roadConeTotal()})`, done: () => roadCones() >= roadConeTotal(), intro: 'Further east along Owler Lane there\'s a hole in the road and nobody working. Follow the cones.' },
       { text: () => 'Explore Fir Vale: Barnsley Road, Herries Road, Hinde House Lane, the Northern General…', done: () => false, intro: '<b>Nice one!</b> Have a wander — St Cuthbert\'s and the Northern General are by the junction.' },
     ],

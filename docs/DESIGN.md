@@ -19,30 +19,25 @@
 
 ## Fir Vale reference — how the map was built
 
-Map services (OpenStreetMap, Overpass, tiles) are blocked from the build
-environment, so the layout was reconstructed from **published address and
-postcode coordinates** (ONS postcode centroids as shown on public postcode
-lookup sites, Open Government Licence) plus published descriptions of which
-streets meet where. Key facts used:
+Since 0.4 the district is generated from **open map data**, not guessed:
 
-- The Sheffield Outer Ring Road (A6102) runs Owler Lane → Rushby Street →
-  a junction with Barnsley Road (A6135) and Firth Park Road by the Northern
-  General Hospital, continuing west as Herries Road.
-- St Cuthbert's Church (1901–04, Gothic Revival, squared stone, plain tile
-  roofs, nave/aisles/transepts, NW tower added 1959) stands on Barnsley Road
-  opposite the Northern General.
-- Fir Vale School and Oasis Academy Fir Vale are on Owler Lane.
-- Page Hall Road connects with Hinde House Lane, Firth Park Road, Rushby
-  Street; Robey Street links Hinde Street and Hinde House Lane.
-- Address coordinates along Barnsley Road, Firth Park Road, Hinde House
-  Lane, Owler Lane, Page Hall Road, Popple Street, Wensley Street, Rushby
-  Street, Skinnerthorpe Road and Herries Road give the street lines
-  (see `src/maps/firvale/data.js`, which lists every reference point).
+- **Overture Maps** release extracts (read straight from its public S3
+  bucket with `scripts/import-map/fetch_overture.py`): road segments,
+  building footprints (with class, height and floors where mapped), land
+  use, woods, street furniture and place categories. Overture's data here
+  derives from **OpenStreetMap — © OpenStreetMap contributors, ODbL**;
+  the credit is shown on the title screen.
+- **Terrain Tiles** (Mapzen / AWS open data, SRTM-derived) for ground
+  heights: an 8 m grid over the district and a 100 m grid out to 8 km.
+- `scripts/import-map/build_map.py` converts it to a compact module,
+  `src/maps/firvale/osm.js` (local metres: origin 53.4093 N 1.45 W, +X
+  east, -Z north). It exports only *categories* of shops, never real
+  business names; the game invents every name and sign.
 
-Postcode centroids are approximate (tens of metres), so junction shapes and
-minor streets are interpretations. Back streets inside the blocks are
-generated to match the dense terraced pattern of the area. Every shop name
-and sign is invented; no real homes, people or businesses are depicted.
+The game adds its own detail on top: Victorian terrace fronts, roofs,
+chimneys, textures, lamp columns, parked cars and people. No map imagery,
+photos or proprietary 3-D data are used, and no real homes, people or
+businesses are depicted.
 
 ## Originality checklist (applied to every asset)
 
@@ -51,7 +46,9 @@ game?" If yes → redesign.
 
 | Asset | Notes |
 | --- | --- |
-| Scrap Blaster | Junk-built pump cannon with a bean-can drum and a rubber-duck sight. |
+| Weapons | VK-9 Kestrel and Hallam Six: original designs and names. |
+| People | Procedural bodies and clothing; invented names and lines. |
+| Sky | Procedural atmosphere + clouds (no photos/HDRIs). |
 | Falcon R | Generic two-box hot hatch shape; invented hexagon/wing badge; fake plates. |
 | Dez | Original character, personality is his ego and competitiveness. |
 | UI | Custom layout and colours (sodium-amber + teal). |

@@ -1,23 +1,24 @@
-// FIR VALE — the playable district, rebuilt on the real street layout.
+// FIR VALE — the playable district, built from real open map data.
 //
-// Streets: Barnsley Road, Herries Road, Firth Park Road, Owler Lane,
-// Page Hall Road, Rushby Street, Hinde House Lane, Popple Street, Wensley
-// Street, Robey Street, Hinde Street, Skinnerthorpe Road and back streets.
-// Landmarks: the Fir Vale junction by St Cuthbert's Church, the Northern
-// General Hospital campus, Fir Vale School on Owler Lane, the Page Hall Road
-// shops. See ./firvale/data.js for sources. Coordinates are metres, +X east,
-// -Z north.
+// Every street, building footprint, shop location, bus stop, crossing,
+// wall, park and wood comes from Overture Maps / OpenStreetMap, and the
+// ground from open elevation data (see scripts/import-map and
+// ./firvale/osm.js). The game adds its own detail on top: Victorian
+// terrace fronts, invented shop names, textures and street furniture.
+// Coordinates are metres, +X east, -Z north.
 import * as THREE from 'three';
 import { groundHeight as G } from '../core/world.js';
-import { StaticBatch, pbr, tiledBox, CHUNK } from '../models/builders.js';
+import { StaticBatch } from '../models/builders.js';
 import * as PB from '../textures/pbr.js';
-import { ROADS, SITES, PLACES, ROUTES, JUNCTION, BOUNDS } from './firvale/data.js';
-import { RoadNetwork, infillStreets } from './firvale/roads.js';
-import { Occupancy, buildTerraces, windowAtlas, signAtlas, displayAtlas, Frame, rng } from './firvale/buildings.js';
-import { buildChurch, buildHospital, buildSchool, inPoly } from './firvale/landmarks.js';
+import OSM from './firvale/osm.js';
+import { PLACES } from './firvale/data.js';
+import { RoadNetwork, DRIVABLE } from './firvale/roads.js';
+import { windowAtlas, signAtlas, displayAtlas, Frame, rng } from './firvale/buildings.js';
+import { buildFootprints } from './firvale/footprints.js';
+import { buildChurch } from './firvale/landmarks.js';
 import { buildStreetscape, plantTrees, parkCars } from './firvale/streetscape.js';
-
-export { JUNCTION };
+import { landMask, groundMaterial, buildGround, buildFarTerrain } from './firvale/terrain.js';
+import { inPoly, flatToPts, centroid } from './firvale/geom.js';
 
 function canvasTex(w, h, draw) {
   const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
@@ -72,6 +73,7 @@ function makeMaterials(quality) {
     bark: set(PB.woodSet(128, { base: [90, 75, 60], seed: 8 }), { metalnessMap: null }), leaves: std({ roughness: 0.9, flatShading: false }),
     carPaint: std({ roughness: 0.28, metalness: 0.5, envMapIntensity: 1.2 }), carGlass: std({ color: 0x1b242c, roughness: 0.05, metalness: 0.3, envMapIntensity: 1.5 }),
     tyre: std({ roughness: 0.9 }), lampLens: std({ roughness: 0.2, emissive: 0x111111 }), plate: std({ roughness: 0.5 }),
+    roofFlat: set(PB.asphaltPBR(128), { roughness: 1 }),
   };
   M.wood.metalness = 0; M.bark.metalness = 0;
   // Share materials wherever only the tint differs: fewer materials = fewer
@@ -80,6 +82,7 @@ function makeMaterials(quality) {
   for (const k of ['ridge', 'clay', 'door', 'plastic', 'hedge', 'fabric', 'fruit', 'panel', 'louvre', 'postbox', 'cabinet', 'leaves', 'tyre', 'plate', 'line']) M[k] = matte;
   for (const k of ['darkMetal', 'metal', 'galv', 'dish']) M[k] = metal;
   for (const k of ['glass', 'officeGlass', 'carGlass', 'lampLens', 'signalLens', 'lampHead', 'carPaint']) M[k] = gloss;
+  for (const k in M) if (!M[k].name) M[k].name = k;
   M.kerb = M.stone; M.ashlar = M.stone; M.tile = M.slate; M.bark = M.wood; M.roadFlat = M.road;
   return { M, signs };
 }
@@ -91,127 +94,123 @@ function signTexture(lines, bg, fg, w = 512, h = 256) {
   });
 }
 
-export function buildFirVale(scene, world, quality = 'medium') {
+export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3, sunDir = new THREE.Vector3(0.45, 0.6, 0.3) } = {}) {
   const t0 = performance.now();
   const { M, signs } = makeMaterials(quality);
   const batch = new StaticBatch();
-  const hospitalPoly0 = SITES.hospital.poly, schoolPoly0 = SITES.school.poly;
-  const blocked0 = (x, z) => inPoly(hospitalPoly0, x, z) || inPoly(schoolPoly0, x, z) || Math.hypot(x - SITES.church.at[0], z - SITES.church.at[1]) < 40;
-  const net = new RoadNetwork([...ROADS, ...infillStreets(blocked0, BOUNDS)]);
-  const occ = new Occupancy({ minX: BOUNDS.minX - 150, maxX: BOUNDS.maxX + 150, minZ: BOUNDS.minZ - 150, maxZ: BOUNDS.maxZ + 150 });
+  const BOUNDS = OSM.bounds;
   const interactables = [], props = [];
+  const net = new RoadNetwork(OSM.roads);
 
-  const hospitalPoly = SITES.hospital.poly, schoolPoly = SITES.school.poly;
-  const nearChurch = (x, z) => Math.hypot(x - SITES.church.at[0], z - SITES.church.at[1]) < 30;
-  const isBlocked = (x, z, sitesOnly = false) => inPoly(hospitalPoly, x, z) || inPoly(schoolPoly, x, z) || nearChurch(x, z) || (!sitesOnly && false);
+  // ---- special sites from the land-use map ----
+  const hospPolys = OSM.landuse.filter((l) => l.k === 'hospital').map((l) => flatToPts(l.p));
+  const schoolPolys = OSM.landuse.filter((l) => l.k === 'school').map((l) => ({ P: flatToPts(l.p), n: l.n || '' }));
+  const church = PLACES.church;
+  const special = (x, z, A) => {
+    if (Math.hypot(x - church[0], z - church[1]) < 25 && A > 400) return 'skip';
+    if (A > 120 && hospPolys.some((P) => inPoly(P, x, z))) return 'hospital';
+    if (A > 150 && schoolPolys.some((s) => inPoly(s.P, x, z))) return 'school';
+    return null;
+  };
 
-  // ---- terrain (chunked grid following the hills) ----
-  const X0 = BOUNDS.minX - 140, X1 = BOUNDS.maxX + 140, Z0 = BOUNDS.minZ - 140, Z1 = BOUNDS.maxZ + 140, ST = 8;
-  for (let cx = X0; cx < X1; cx += CHUNK) for (let cz = Z0; cz < Z1; cz += CHUNK) {
-    const pos = [], uv = [], idx = []; const n = CHUNK / ST;
-    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) { const x = cx + i * ST, z = cz + j * ST; pos.push(x, G(x, z) - 0.05, z); uv.push(x / 4, -z / 4); }
-    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a = j * (n + 1) + i, b = a + n + 1; idx.push(a, b, a + 1, a + 1, b, b + 1); }
-    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
-    batch.add(M.grass, g, { color: '#9aa87e' });
-  }
+  // ---- buildings from the real footprints ----
+  const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffa020 });
+  const fp = buildFootprints(batch, M, world, net, OSM, { signs, shopCells: signs.cells, special, miniMartAt: PLACES.miniMart });
 
-  // ---- roads: mark them in the occupancy grid, then build ----
-  for (const r of net.roads) for (const smp of r.samples) {
-    const w = r.half + r.pave + 0.3;
-    for (let o = -w; o <= w; o += 0.8) { const x = smp.x + smp.tz * o, z = smp.z - smp.tx * o; for (let d = -1.6; d <= 1.6; d += 0.8) occ.set(x + smp.tx * d, z + smp.tz * d); }
-  }
+  // ---- ground: real terrain + land-cover mask ----
+  const mask = landMask(OSM, fp.residential);
+  const gmat = groundMaterial(mask, quality === 'low' ? 256 : 512);
+  buildGround(batch, gmat);
+  buildFarTerrain(scene, OSM.far, haze, sunDir);
+
+  // ---- streets ----
   net.build(batch, M);
 
-  // ---- landmarks ----
-  const churchBoard = signTexture([["ST CUTHBERT'S", 44, 70], ['CHURCH · FIR VALE', 30, 118], ['Community meal & food bank', 24, 170], ['All welcome', 24, 210]], '#1f3b73', '#fff');
-  const church = buildChurch(batch, M, world, SITES.church, churchBoard, scene);
-  interactables.push({ ...church.interact, prompt: "Read St Cuthbert's notice board", lines: ["<b>Notice board:</b> \"St Cuthbert's, Fir Vale. Community meal every week. All welcome.\"", '<b>Notice board:</b> "Lost: one Scrap Blaster. If found, please do not return it."'] });
-  const nghSign = signTexture([['NORTHERN GENERAL HOSPITAL', 30, 70], ['Main Entrance  →', 34, 130], ['Emergency Department  →', 30, 190]], '#f4f4f0', '#0a4a8a', 512, 220);
-  const hosp = buildHospital(batch, M, world, hospitalPoly, net, scene, nghSign);
-  buildSchool(batch, M, world, schoolPoly, net);
-  // mark landmark areas as occupied
-  for (let x = BOUNDS.minX - 150; x < BOUNDS.maxX + 150; x += 1) for (let z = BOUNDS.minZ - 150; z < BOUNDS.maxZ + 150; z += 1) if (isBlocked(x, z)) occ.set(x, z);
-
-  // ---- terraces & shops on every street ----
-  const shopSpots = buildTerraces(batch, M, net, occ, world, isBlocked, null, signs);
+  // ---- St Cuthbert's Church on its real footprint ----
+  const churchB = fp.list.find((b) => b.type === 'skip');
+  if (churchB) {
+    const o = churchB.o;
+    const churchBoard = signTexture([["ST CUTHBERT'S", 44, 70], ['CHURCH · FIR VALE', 30, 118], ['Community meal & food bank', 24, 170], ['All welcome', 24, 210]], '#1f3b73', '#fff');
+    const ch = buildChurch(batch, M, world, { at: [o.cx, o.cz], rot: Math.atan2(o.ux, o.uz) }, churchBoard, scene);
+    interactables.push({ ...ch.interact, prompt: "Read St Cuthbert's notice board", lines: ["<b>Notice board:</b> \"St Cuthbert's, Fir Vale. Community meal every week. All welcome.\"", '<b>Notice board:</b> "Warm space open weekdays. Tea, toast and a natter. Nobody asks why you\'re here."'] });
+  }
 
   // ---- street furniture, trees, parked cars ----
-  const scape = buildStreetscape(batch, M, world, net, JUNCTION, occ, isBlocked, PLACES);
-  plantTrees(batch, M, world, [...hosp.trees, ...scape.trees, [-30, 200, 1.1], [0, 215, 0.9], [-80, 210, 1.2]]);
-  const parked = parkCars(batch, M, world, net, JUNCTION, isBlocked);
+  const scape = buildStreetscape(batch, M, world, net, OSM, beaconMat);
+  plantTrees(batch, M, world, scape.trees);
+  plantTrees(batch, M, world, scape.woods, true);
+  const junctions = [...net.nodes.values()].filter((n) => n.roads.length >= 3).map((n) => { const e = n.roads[0], S = e.road.samples, p = e.end === 'a' ? S[0] : S[S.length - 1]; return [p.x, p.z]; });
+  const nearJunction = (x, z, r) => junctions.some(([jx, jz]) => (jx - x) ** 2 + (jz - z) ** 2 < r * r);
+  const busStops = OSM.furniture.filter((f) => f.k === 'bus').map((f) => f.p);
+  const keepClear = (x, z) => nearJunction(x, z, 11) || Math.hypot(x - PLACES.miniMart[0], z - PLACES.miniMart[1]) < 22 || busStops.some(([bx, bz]) => (bx - x) ** 2 + (bz - z) ** 2 < 144) || world.near(x, z, 1, []).some((b) => b.tag !== 'edge' && b.tag !== 'building' && b.tag !== 'lamp' && Math.hypot(((b.minX + b.maxX) / 2) - x, ((b.minZ + b.maxZ) / 2) - z) < 2.5);
+  const parked = parkCars(batch, M, world, net, keepClear);
 
-  // ---- zebra crossing on Page Hall Road with flashing globes ----
-  const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffa020 });
-  const phr = net.byName('Page Hall Road');
-  const zs = phr.length * 0.55;
-  for (let o = -phr.half + 0.5; o < phr.half - 0.3; o += 1.0) {
-    const p = net.pointAt(phr, zs, o + 0.25, {});
-    batch.box(M.line, p.x, G(p.x, p.z) + 0.05, p.z, 0.5, 0.02, 3.2, { color: '#f4f4ee', ry: Math.atan2(p.tx, p.tz) + Math.PI / 2 });
-  }
-  const beaconGeo = new THREE.SphereGeometry(0.2, 12, 8);
-  for (const sd of [1, -1]) for (const ds of [-2.2, 2.2]) {
-    const p = net.pointAt(phr, zs + ds, sd * (phr.half + 0.45), {}), g = G(p.x, p.z);
-    for (let i = 0; i < 6; i++) batch.box(M.plastic, p.x, g + 0.25 + i * 0.45, p.z, 0.1, 0.45, 0.1, { color: i % 2 ? '#111' : '#f4f4f4' });
-    const m = new THREE.Mesh(beaconGeo, beaconMat); m.position.set(p.x, g + 2.9, p.z); scene.add(m);
-    world.addBox(p.x - 0.08, p.x + 0.08, g - 1, g + 2.9, p.z - 0.08, p.z + 0.08, 'pole');
-  }
-
-  // ---- the Fir Vale Mini Mart (our shop), shopkeeper ----
-  const mm = shopSpots.find((s) => s.sign === 0) || shopSpots[0];
+  // ---- key places for the missions ----
+  const phr = net.longest('Page Hall Road');
+  const owl = net.allNamed('Owler Lane');
+  // Mini Mart: the grocer on Page Hall Road
+  const mm = fp.miniMart || fp.shopSpots.find((s) => s.cat === 'grocer') || fp.shopSpots[0];
   interactables.push({ x: mm.front[0], z: mm.front[1], radius: 3, prompt: 'Talk to the shopkeeper', lines: [
     '<b>Shopkeeper:</b> "Welcome to Fir Vale Mini Mart! Everything you need, except what you came in for."',
     '<b>Shopkeeper:</b> "That rifle? Found it in a skip on Owler Lane with a revolver and a note saying SORRY. No refunds."',
     '<b>Shopkeeper:</b> "Lad in the racing chair doing laps of Page Hall Road? That\'s Dez. Don\'t race him. He cheats. With skill."',
     '<b>Shopkeeper:</b> "Samosas are fresh. Fresh-ish. Fresh in spirit."',
+    '<b>Shopkeeper:</b> "Dobrý deň, as my Slovak regulars taught me. I\'ve learned more Slovak than they\'ve learned Sheffield. Nobody learns Sheffield."',
   ] });
 
-  // ---- cans on the low wall in front of Fir Vale School ----
-  { const { x0, x1 } = PLACES.cansWall;
-    const wz = (x) => 205 + (x - 70) * 30 / 115 - 0.8, ry = Math.atan2(115, 30);
-    for (let x = x0; x < x1; x += 2) { const xc = x + 1, z = wz(xc), g = G(xc, z); batch.box(M.brick, xc, g + 0.55, z, 0.35, 1.1, 2.08, { tile: 1.3, color: '#e0c4b4', ry }); batch.box(M.stone, xc, g + 1.15, z, 0.42, 0.1, 2.1, { color: '#cfc3ad', ry }); world.addOBB(xc, z, 0.2, 1.04, ry, g - 1, g + 1.2, 'wall'); }
-    for (let i = 0; i < 6; i++) { const x = x0 + 16 + i * 1.3, z = wz(x); props.push({ type: 'can', x, z, y: G(x, z) + 1.2 + 0.02 }); } }
+  // Cans on a low wall by Fir Vale School on Owler Lane
+  const school = schoolPolys.find((s) => /Fir Vale Academy|Fir Vale School/.test(s.n)) || schoolPolys[0];
+  const sc = school ? centroid(school.P) : [150, 260];
+  let cansAt = null;
+  { let best = null;
+    for (const r of owl) for (let s = 5; s < r.length - 5; s += 3) { const p = net.pointAt(r, s, 0, {}); const d = Math.hypot(p.x - sc[0], p.z - sc[1]); if (!best || d < best.d) best = { d, r, s }; }
+    if (best) {
+      const r = best.r, c0 = net.pointAt(r, best.s, 0, {}), side = Math.sign((sc[0] - c0.x) * c0.tz - (sc[1] - c0.z) * c0.tx) || 1;
+      // + offset is to the left of travel: (tz, -tx)
+      const sgn = ((sc[0] - c0.x) * c0.tz + (sc[1] - c0.z) * -c0.tx) > 0 ? 1 : -1;
+      const off = sgn * (r.half + r.pave + 0.35);
+      for (let k = -6; k <= 6; k++) {
+        const q = net.pointAt(r, best.s + k * 2, off, {}), g = G(q.x, q.z), ry = Math.atan2(q.tx, q.tz);
+        batch.box(M.brick, q.x, g + 0.55, q.z, 0.35, 1.1, 2.08, { tile: 1.3, color: '#e0c4b4', ry }); batch.box(M.stone, q.x, g + 1.15, q.z, 0.42, 0.1, 2.1, { color: '#cfc3ad', ry });
+        world.addOBB(q.x, q.z, 1.04, 0.2, ry + Math.PI / 2, g - 1, g + 1.2, 'wall');
+      }
+      for (let i = 0; i < 6; i++) { const q = net.pointAt(r, best.s - 4 + i * 1.4, off, {}); props.push({ type: 'can', x: q.x, z: q.z, y: G(q.x, q.z) + 1.2 + 0.02 }); }
+      cansAt = [c0.x, c0.z];
+      void side;
+    } }
 
-  // ---- roadworks on Owler Lane (half the carriageway closed) ----
-  { const ow = net.byName('Owler Lane'), s0 = ow.length * PLACES.roadworks.t;
-    const P = (s, o) => net.pointAt(ow, s, o, {});
-    const c = P(s0, -ow.half / 2), ry = Math.atan2(c.tx, c.tz), g = G(c.x, c.z);
-    const f = new Frame(batch, c.x, c.z, ry, g);
-    f.box(M.plastic, 0, 0.7, 0, 1.8, 1.4, 3.6, { color: '#e2b007' }); f.box(M.stone, 0, 1.2, 0, 1.4, 0.5, 3.2, { color: '#6d655a' });
-    world.addOBB(c.x, c.z, 0.9, 1.8, ry, g - 1, g + 1.4, 'skip');
-    for (let k = -3; k <= 3; k++) {
-      const b = P(s0 + k * 2.2, -0.4), bg = G(b.x, b.z);
-      batch.box(M.plastic, b.x, bg + 0.8, b.z, 0.08, 0.25, 2, { color: k % 2 ? '#d33' : '#f4f4f4', ry: Math.atan2(b.tx, b.tz) });
-      world.addOBB(b.x, b.z, 0.1, 1, Math.atan2(b.tx, b.tz), bg - 1, bg + 0.95, 'barrier');
-      const cn = P(s0 + k * 2.2, 0.8); props.push({ type: 'cone', x: cn.x, z: cn.z, tag: 'roadworks' });
-    }
-    const lp = P(s0 + 12, -(ow.half + ow.pave - 0.9)), lg = G(lp.x, lp.z);
-    batch.box(M.plastic, lp.x, lg + 1.2, lp.z, 1.2, 2.4, 1.2, { color: '#2f7fd0' });
-    world.addBox(lp.x - 0.6, lp.x + 0.6, lg - 1, lg + 2.5, lp.z - 0.6, lp.z + 0.6, 'loo');
-    interactables.push({ x: lp.x, z: lp.z, radius: 2.2, prompt: 'Knock on the portaloo', lines: ['<b>Voice inside:</b> "OCCUPIED! Been occupied since Tuesday, love."', '<b>Voice inside:</b> "I\'m not coming out till they\'ve finished Owler Lane."', '<b>Voice inside:</b> "...Is it still Tuesday?"'] });
-  }
-  // a couple of cones outside the shops too
+  // Roadworks on Owler Lane (half the carriageway closed) + portaloo
+  { const ow = owl.sort((a, b) => b.length - a.length)[Math.min(1, owl.length - 1)] || owl[0];
+    if (ow) {
+      const s0 = ow.length * 0.5, P = (s, o) => net.pointAt(ow, s, o, {});
+      const c = P(s0, -ow.half / 2), ry = Math.atan2(c.tx, c.tz), g = G(c.x, c.z);
+      const f = new Frame(batch, c.x, c.z, ry, g);
+      f.box(M.plastic, 0, 0.7, 0, 1.8, 1.4, 3.6, { color: '#e2b007' }); f.box(M.stone, 0, 1.2, 0, 1.4, 0.5, 3.2, { color: '#6d655a' });
+      world.addOBB(c.x, c.z, 0.9, 1.8, ry, g - 1, g + 1.4, 'skip');
+      for (let k = -3; k <= 3; k++) {
+        const b = P(s0 + k * 2.2, -0.4), bg = G(b.x, b.z);
+        batch.box(M.plastic, b.x, bg + 0.8, b.z, 0.08, 0.25, 2, { color: k % 2 ? '#d33' : '#f4f4f4', ry: Math.atan2(b.tx, b.tz) });
+        world.addOBB(b.x, b.z, 0.1, 1, Math.atan2(b.tx, b.tz), bg - 1, bg + 0.95, 'barrier');
+        const cn = P(s0 + k * 2.2, 0.8); props.push({ type: 'cone', x: cn.x, z: cn.z, tag: 'roadworks' });
+      }
+      const lp = P(s0 + 12, -(ow.half + ow.pave - 0.9)), lg = G(lp.x, lp.z);
+      batch.box(M.plastic, lp.x, lg + 1.2, lp.z, 1.2, 2.4, 1.2, { color: '#2f7fd0' });
+      world.addBox(lp.x - 0.6, lp.x + 0.6, lg - 1, lg + 2.5, lp.z - 0.6, lp.z + 0.6, 'loo');
+      interactables.push({ x: lp.x, z: lp.z, radius: 2.2, prompt: 'Knock on the portaloo', lines: ['<b>Voice inside:</b> "OCCUPIED! Been occupied since Tuesday, love."', '<b>Voice inside:</b> "I\'m not coming out till they\'ve finished Owler Lane."', '<b>Voice inside:</b> "...Is it still Tuesday?"'] });
+    } }
   { const p = net.pointAt(phr, phr.length * 0.3, -(phr.half + 0.7), {}); props.push({ type: 'cone', x: p.x, z: p.z }); }
 
-  // ---- distant hills: Wincobank to the north-east, the city to the south ----
-  const hillMat = new THREE.MeshBasicMaterial({ color: 0x8aa0a8, fog: false }), hillMat2 = new THREE.MeshBasicMaterial({ color: 0x9fb2b6, fog: false });
-  const R = rng(3);
-  for (let i = 0; i < 28; i++) {
-    const a = (i / 28) * Math.PI * 2, r = 900 + R() * 120, h = 40 + R() * 60 + (Math.cos(a - 0.6) > 0.7 ? 50 : 0);
-    const m = new THREE.Mesh(new THREE.ConeGeometry(160 + R() * 120, h, 6), i % 2 ? hillMat : hillMat2);
-    m.position.set(Math.cos(a) * r, -25 + h / 2, Math.sin(a) * r); scene.add(m);
-  }
-
   // ---- invisible map edges ----
-  world.addBox(BOUNDS.minX - 2, BOUNDS.maxX + 2, -50, 200, BOUNDS.minZ - 2, BOUNDS.minZ, 'edge');
-  world.addBox(BOUNDS.minX - 2, BOUNDS.maxX + 2, -50, 200, BOUNDS.maxZ, BOUNDS.maxZ + 2, 'edge');
-  world.addBox(BOUNDS.minX - 2, BOUNDS.minX, -50, 200, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
-  world.addBox(BOUNDS.maxX, BOUNDS.maxX + 2, -50, 200, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
+  world.addBox(BOUNDS.minX - 2, BOUNDS.maxX + 2, -80, 300, BOUNDS.minZ - 2, BOUNDS.minZ, 'edge');
+  world.addBox(BOUNDS.minX - 2, BOUNDS.maxX + 2, -80, 300, BOUNDS.maxZ, BOUNDS.maxZ + 2, 'edge');
+  world.addBox(BOUNDS.minX - 2, BOUNDS.minX, -80, 300, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
+  world.addBox(BOUNDS.maxX, BOUNDS.maxX + 2, -80, 300, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
 
   const meshes = batch.build(scene);
-  for (const m of meshes) { m.castShadow = !m.userData.detail; m.receiveShadow = true; m.geometry.computeBoundingSphere(); }
+  for (const m of meshes) { m.castShadow = !m.userData.detail && m.material !== gmat; m.receiveShadow = true; m.geometry.computeBoundingSphere(); }
 
   // distance culling: hide far chunks (fog hides them anyway) and far detail
-  const detailRange = quality === 'low' ? 45 : quality === 'high' ? 110 : 75, farRange = quality === 'low' ? 150 : quality === 'high' ? 260 : 200;
+  const detailRange = quality === 'low' ? 45 : quality === 'high' ? 110 : 75, farRange = quality === 'low' ? 150 : quality === 'high' ? 230 : 195;
   let lodT = 0, lx = 1e9, lz = 1e9;
   function updateLOD(pos, dt = 1) {
     lodT -= dt;
@@ -221,27 +220,39 @@ export function buildFirVale(scene, world, quality = 'medium') {
     for (const m of meshes) {
       const s = m.geometry.boundingSphere; if (!s) continue;
       const d = Math.hypot(s.center.x - pos.x, s.center.z - pos.z) - s.radius * 0.55;
-      m.visible = d < (m.userData.detail ? detailRange : farRange);
-      if (!m.userData.detail) m.castShadow = d < 45; // only nearby chunks draw into the shadow map
+      m.visible = d < (m.userData.detail ? detailRange : m.material === gmat ? farRange + 150 : farRange);
+      if (!m.userData.detail && m.material !== gmat) m.castShadow = d < 45; // only nearby chunks draw into the shadow map
     }
   }
 
-  console.log(`Fir Vale built in ${Math.round(performance.now() - t0)} ms: ${meshes.length} meshes, ${world.boxes.length} colliders, ${parked} parked cars, ${shopSpots.length} shops`);
-
   const surfaceAt = (x, z) => {
-    if (inPoly(schoolPoly, x, z)) return 'grass';
-    return net.surfaceAt(x, z);
+    const s = net.surfaceAt(x, z); if (s) return s;
+    const px = Math.floor(x - mask.x0), pz = Math.floor(z - mask.z0);
+    const d = maskData(mask, px, pz);
+    return d[0] > 120 ? 'grass' : d[1] > 120 ? 'dirt' : 'paving';
   };
-  // spawn on the Page Hall Road pavement looking down the shops; Dez laps
-  // the opposite pavement
-  const sp = net.pointAt(phr, phr.length * 0.32, -(phr.half + phr.pave * 0.45), {});
-  const spawn = { x: sp.x, z: sp.z, yaw: Math.atan2(-sp.tx, -sp.tz) - 0.12 };
-  const dezPath = []; for (let k = 0.12; k <= 0.9; k += 0.06) { const p = net.pointAt(phr, phr.length * k, -(phr.half + 1.3), {}); dezPath.push([p.x, p.z]); }
+
+  // spawn on the Page Hall Road pavement outside the Mini Mart, looking down the shops
+  const mmN = net.nearest(mm.front[0], mm.front[1], null, (r) => r.name === 'Page Hall Road') || net.nearestStreet(mm.front[0], mm.front[1]);
+  const spR = mmN ? mmN.road : phr;
+  const sp = net.pointAt(spR, (mmN ? mmN.s : spR.length * 0.4) - 6, (mmN ? mmN.side : 1) * (spR.half + spR.pave * 0.5), {});
+  const spawn = { x: sp.x, z: sp.z, yaw: Math.atan2(-sp.tx, -sp.tz) + Math.PI };
+  const dezPath = []; for (let k = 0.1; k <= 0.9; k += 0.05) { const p = net.pointAt(phr, phr.length * k, -(mmN ? mmN.side : 1) * (phr.half + phr.pave * 0.55), {}); dezPath.push([p.x, p.z]); }
+
+  console.log(`Fir Vale built in ${Math.round(performance.now() - t0)} ms: ${meshes.length} meshes, ${world.boxes.length} colliders, ${parked} parked cars, ${fp.shopSpots.length} shops, ${fp.list.length} buildings`);
   return {
     spawn,
-    startShop: { x: mm.front[0], zc: mm.front[1] },
+    startShop: { x: mm.front[0], zc: mm.front[1], y: mm.gF },
     interactables, props, beaconMat, meshCount: meshes.length,
-    surfaceAt, net, routes: ROUTES, dezPath, updateLOD,
-    roadsForMap: ROADS, junction: JUNCTION, bounds: BOUNDS, sites: SITES,
+    surfaceAt, net, dezPath, updateLOD, cansAt,
+    bounds: BOUNDS, shopSpots: fp.shopSpots, buildings: fp.list, landuse: OSM.landuse, junctions, nearJunction,
   };
+}
+
+let _maskPix = null;
+function maskData(mask, px, pz) {
+  const W = mask.canvas.width, H = mask.canvas.height;
+  if (!_maskPix) _maskPix = mask.canvas.getContext('2d').getImageData(0, 0, W, H).data;
+  if (px < 0 || pz < 0 || px >= W || pz >= H) return [0, 0, 0];
+  const i = (pz * W + px) * 4; return [_maskPix[i], _maskPix[i + 1], _maskPix[i + 2]];
 }

@@ -42,7 +42,31 @@ node scripts/serve.mjs
 Settings: look sensitivity, aim assist, auto-fire, gyro aiming, left-handed
 layout, invert look, graphics quality and volume. They are remembered.
 
-## What's new in 0.3 — the real Fir Vale
+## What's new in 0.4 — the real map, a real sky, and the people of Fir Vale
+
+- **Built from real open map data.** Every street, all 1,800 building
+  footprints, parks, woods, car parks, walls, fences, bus stops, crossings,
+  traffic lights, benches and post boxes come from Overture Maps /
+  OpenStreetMap, and the hills from open elevation data. Terrace rows are
+  split into individual houses that step down the real slopes, with the
+  front facing the street they really face.
+- **Shops where the real shops are**: each real shop location becomes a
+  shopfront of the same *kind* (grocer, bakery, phone shop, pharmacy,
+  barber, travel agent…) with an invented name.
+- **Photoreal sky**: a physically based atmosphere with volumetric cumulus
+  clouds, rendered once at load; it also lights the world and colours the
+  haze. The real hills around Sheffield fill the horizon out to 8 km.
+- **The people of Fir Vale**: ~120 residents walking the pavements,
+  chatting outside shops, wheelchair users, and people sleeping rough in
+  doorways — Slovak and Czech neighbours, Ukrainian families who came as
+  refugees, Polish, British-Pakistani, Yemeni and Sheffield-born locals,
+  each with their own greetings and lines. Walk up and press USE to talk.
+  They duck and run from gunfire (civilians can't be hurt).
+- **Traffic** drives the real street network, choosing turns at every
+  junction.
+- New mission step: say hello to the locals.
+
+## What was new in 0.3 — the real Fir Vale
 
 - The map is rebuilt on the **real street layout**, reconstructed from
   public address/postcode coordinates: Barnsley Road, Herries Road, Firth
@@ -127,13 +151,14 @@ src/weapons/            rig, animation, hands, arsenal, gun models (models/)
 src/render/             image-based lighting
 src/entities/           Falcon R AI, Dez, props, effects
 src/models/             low-poly model builders (car, characters, batching)
-src/maps/               Fir Vale: firVale.js (builder), firvale/data.js (street
-                        data + sources), roads, buildings, landmarks, streetscape
+src/maps/               Fir Vale: firVale.js (builder), firvale/osm.js (generated
+                        real map data), roads, footprints, terrain, streetscape
 src/textures/           textures painted in code
 src/audio/              procedural sound engine + car engine synth
 src/ui/                 HUD code and CSS
 src/lib/                Three.js (bundled locally, MIT licence)
-scripts/                local server + automated smoke test
+scripts/                local server, smoke test, screenshot tools,
+                        import-map/ (rebuilds firvale/osm.js from open data)
 docs/                   design notes
 ```
 

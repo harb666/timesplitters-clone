@@ -9,7 +9,6 @@ import { Player } from './player/player.js';
 import { Arsenal } from './weapons/arsenal.js';
 import { weaponMaterials } from './weapons/materials.js';
 import { Casings } from './entities/casings.js';
-import { makeEnvironment } from './render/environment.js';
 import { initSoundscape, setEnvironment } from './audio/soundscape.js';
 import { Car } from './entities/car.js';
 import { Minimap } from './ui/minimap.js';
@@ -19,7 +18,8 @@ import { Effects } from './entities/effects.js';
 import { Hud } from './ui/hud.js';
 import { initAudio, updateListener, setVolume, sfx, makeHum, suspendAudio } from './audio/audio.js';
 import { MissionRunner, missionWelcome } from './core/missions.js';
-import { makeSky } from './render/sky.js';
+import { makeSky, SUN_DIR } from './render/sky.js';
+import { Crowd } from './entities/crowd.js';
 
 const QUALITY = {
   low: { dpr: 1, fogNear: 35, fogFar: 140, aa: false, shadows: 0 },
@@ -46,23 +46,26 @@ function boot() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;  // filmic highlights, like a real camera
   renderer.toneMappingExposure = 1.0;
-  if (q.shadows) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; }
+  if (q.shadows) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap; }
   renderer.autoClear = false;
   renderer.info.autoReset = false; // we render two passes per frame; count both
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xd3d6d2);
-  scene.fog = new THREE.Fog(0xd3d6d2, q.fogNear, q.fogFar);
-  const sky = makeSky(); scene.add(sky);
-  const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 700);
+  // photoreal sky baked into a cube map; it also lights the world and tints the haze
+  const sky = makeSky(renderer, { quality: settings.quality });
+  scene.background = sky.background;
+  scene.fog = new THREE.Fog(sky.horizon, q.fogNear, q.fogFar);
+  const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 20000);
 
   // Lighting: image-based sky light (reflections + ambient) and a warm sun
   // with real-time shadows that follow the player (medium/high quality).
-  const env = makeEnvironment(renderer);
+  const env = sky.env;
   scene.environment = env;
-  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x7a6450, 0.6));
-  const sun = new THREE.DirectionalLight(0xfff0d8, 3.2);
-  sun.position.set(22, 40, 14);
+  scene.environmentIntensity = 0.9;
+  scene.add(new THREE.HemisphereLight(0xcfdcf0, 0x6a5e50, 0.35));
+  const sun = new THREE.DirectionalLight(0xfff0dc, 3.0);
+  const sunOff = SUN_DIR.clone().multiplyScalar(60);
+  sun.position.copy(sunOff);
   if (q.shadows) {
     sun.castShadow = true;
     sun.shadow.mapSize.set(q.shadows, q.shadows);
@@ -81,7 +84,7 @@ function boot() {
   const vmFill = new THREE.DirectionalLight(0xbcd0ff, 0.6); vmFill.position.set(-1, 0.2, 0.5); vmScene.add(vmFill);
 
   const world = new World();
-  const map = buildFirVale(scene, world, settings.quality);
+  const map = buildFirVale(scene, world, settings.quality, { haze: sky.horizon, sunDir: SUN_DIR });
   const hud = new Hud(camera);
   const effects = new Effects(scene);
   const props = new Props(scene, map.props);
@@ -98,13 +101,16 @@ function boot() {
   // Traffic: one Falcon R doing laps, one parked up in the car park.
   // Traffic on the real routes through the Fir Vale junction.
   game.cars = [];
-  const carSpecs = [[0x1d5fd1, 'FV24 ZAP', 3, 0.35], [0xe8e8e8, 'S5 7NGH', 0, 0.6], [0x2b2b2e, 'YA19 OWL', 1, 0.15], [0x9a1b1b, 'S4 8PHR', -1, 0.8]];
-  for (const [paint, plate, bias, start] of carSpecs) game.cars.push(new Car(scene, world, { net: map.net, routes: map.routes, paint, plate, speedBias: bias, hud, start, others: game.cars }));
+  const carSpecs = [[0x1d5fd1, 'FV24 ZAP', 3, 0.35], [0xe8e8e8, 'S5 7NGH', 0, 0.6], [0x2b2b2e, 'YA19 OWL', 1, 0.15], [0x9a1b1b, 'S4 8PHR', -1, 0.8], [0x6b7075, 'S5 0FV', 0, 0.5], [0x2f5d3a, 'YR68 PHR', -2, 0.25]];
+  for (const [paint, plate, bias, start] of carSpecs) game.cars.push(new Car(scene, world, { net: map.net, paint, plate, speedBias: bias, hud, start, others: game.cars, focus: player.pos }));
   scene.traverse((o) => { if (o.isMesh && !o.castShadow && o.geometry && o.material && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
 
   const dez = new Dez(scene, world, { path: map.dezPath, hud });
   game.dez = dez;
   game.npcs = [dez];
+  // the people of Fir Vale
+  const crowd = new Crowd(scene, world, map, hud, { count: settings.quality === 'low' ? 80 : 120 });
+  game.crowd = crowd;
 
   // ---- game-level helpers used by the weapon ----
   const tmpV = new THREE.Vector3();
@@ -125,7 +131,7 @@ function boot() {
     return best;
   };
   game.addScore = (n, label) => { game.score += n; hud.score(game.score); if (label) hud.toast(`${label} +${n}`); sfx.score(); };
-  game.onGunfire = () => { for (const n of game.npcs) n.onLoudNoise(player.pos.x, player.pos.z); };
+  game.onGunfire = () => { for (const n of game.npcs) n.onLoudNoise(player.pos.x, player.pos.z); crowd.onLoudNoise(player.pos.x, player.pos.z); };
 
   player.onDamage = () => hud.damageFlash();
   player.onDeath = (src) => {
@@ -148,6 +154,8 @@ function boot() {
     const px = player.pos.x, pz = player.pos.z;
     const dd = Math.hypot(dez.x - px, dez.z - pz);
     if (dd < dez.interactRadius) { best = { prompt: 'Talk to Dez', npc: dez }; bestD = dd; }
+    const person = crowd.nearest(px, pz, 2.4);
+    if (person) { const d = Math.hypot(person.x - px, person.z - pz); if (d < bestD) { best = { prompt: 'Talk to ' + person.name, person }; bestD = d; } }
     for (const it of map.interactables) {
       const d = Math.hypot(it.x - px, it.z - pz);
       if (d < it.radius && d < bestD) { best = it; bestD = d; }
@@ -210,9 +218,9 @@ function boot() {
     if (Math.abs(camera.fov - wantFov) > 0.01) { camera.fov = wantFov; camera.updateProjectionMatrix(); }
     document.body.classList.toggle('ads', arsenal.adsK > 0.6);
     game.casings.update(dt);
-    for (const c of game.cars) c.update(dt, player, map.junction);
+    for (const c of game.cars) c.update(dt, player);
     map.updateLOD(player.pos, dt);
-    sky.position.copy(camera.position);
+    crowd.update(dt, player);
     minimap.update(player, game.cars, dez);
     for (const n of game.npcs) n.update(dt, player);
     props.update(dt);
@@ -223,6 +231,7 @@ function boot() {
     hud.prompt(it ? (input.isTouch ? 'USE: ' : '[E] ') + it.prompt : '');
     if (input.use && it) {
       if (it.npc) { it.npc.interact(player); game.stats.talkedToDez = true; }
+      else if (it.person) { crowd.talk(it.person); game.stats.talkedToLocals = (game.stats.talkedToLocals || 0) + 1; }
       else { it.i = ((it.i ?? -1) + 1) % it.lines.length; hud.subtitle(it.lines[it.i], 4); }
     }
 
@@ -241,9 +250,9 @@ function boot() {
     // keep the sun's shadow box centred on the player (snapped to avoid shimmer)
     if (sun.castShadow) {
       const sx = Math.round(player.pos.x / 2) * 2, sz = Math.round(player.pos.z / 2) * 2;
-      sun.target.position.set(sx, player.pos.y - 1.6, sz); sun.position.set(sx + 22, player.pos.y + 38, sz + 14);
+      sun.target.position.set(sx, player.pos.y - 1.6, sz); sun.position.set(sx + sunOff.x, player.pos.y - 1.6 + sunOff.y, sz + sunOff.z);
     }
-    if (!humNode && map.startShop) humNode = makeHum(map.startShop.x + 1.5, 3.4, map.startShop.zc);
+    if (!humNode && map.startShop) humNode = makeHum(map.startShop.x + 1.5, (map.startShop.y ?? 0) + 3.4, map.startShop.zc);
 
     hud.vitals(player.health, player.armour);
     hud.ammo(arsenal);

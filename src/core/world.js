@@ -2,14 +2,22 @@
 // about Y (buildings follow the real, angled streets). A uniform grid keeps
 // queries fast with thousands of buildings.
 
-// Fir Vale's lie of the land: the ground climbs to the north-east towards
-// Wincobank hill and Firth Park, and to the south-west up Barnsley Road
-// towards Pitsmoor, with a gentle hollow along Owler Lane.
+// Fir Vale's real lie of the land: a heightmap sampled from open elevation
+// data (see scripts/import-map), relative to the Page Hall/Owler Lane area.
+// The ground falls from Firth Park and Barnsley Road down to the Owler Brook
+// valley and climbs again towards Wincobank.
+import OSM from '../maps/firvale/osm.js';
+const HM = (() => {
+  const h = OSM.height, bin = atob(h.d), n = h.nx * h.nz, f = new Float32Array(n);
+  for (let i = 0; i < n; i++) { let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8); if (v > 32767) v -= 65536; f[i] = v / 10; }
+  return { ...h, f };
+})();
+export const TERRAIN = HM;
 export function groundHeight(x, z) {
-  const ne = x * 0.028 - z * 0.022;
-  const sw = Math.max(0, -x - z - 200) * 0.03;
-  const hollow = -3.5 * Math.exp(-((z - 200) * (z - 200)) / (2 * 90 * 90));
-  return ne + sw + hollow + Math.sin(x / 170) * Math.cos(z / 210) * 2.2;
+  let u = (x - HM.x0) / HM.step, v = (z - HM.z0) / HM.step;
+  u = Math.max(0, Math.min(HM.nx - 1.001, u)); v = Math.max(0, Math.min(HM.nz - 1.001, v));
+  const i = u | 0, j = v | 0, a = u - i, b = v - j, F = HM.f, k = j * HM.nx + i;
+  return (F[k] * (1 - a) + F[k + 1] * a) * (1 - b) + (F[k + HM.nx] * (1 - a) + F[k + HM.nx + 1] * a) * b;
 }
 
 const CELL = 24;

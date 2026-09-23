@@ -1,6 +1,6 @@
 // Rotating minimap with real street names, drawn from the road data.
 // The street map is painted once; each update just crops/rotates it.
-const PX = 0.5; // pixels per metre on the pre-rendered map
+const PX = 1; // pixels per metre on the pre-rendered map
 
 export class Minimap {
   constructor(map) {
@@ -11,29 +11,37 @@ export class Minimap {
     const W = Math.ceil((this.b.maxX - this.b.minX) * PX), H = Math.ceil((this.b.maxZ - this.b.minZ) * PX);
     const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
     const X = (x) => (x - this.b.minX) * PX, Z = (z) => (z - this.b.minZ) * PX;
-    g.fillStyle = '#2b3228'; g.fillRect(0, 0, W, H);
-    // hospital + school sites
-    const poly = (pts, col) => { g.fillStyle = col; g.beginPath(); pts.forEach(([x, z], i) => (i ? g.lineTo(X(x), Z(z)) : g.moveTo(X(x), Z(z)))); g.closePath(); g.fill(); };
-    if (map.sites) { poly(map.sites.hospital.poly, '#3f4a57'); poly(map.sites.school.poly, '#3c5a36'); }
+    g.fillStyle = '#34372f'; g.fillRect(0, 0, W, H);
+    const poly = (f, col) => { g.fillStyle = col; g.beginPath(); for (let i = 0; i < f.length; i += 2) (i ? g.lineTo(X(f[i]), Z(f[i + 1])) : g.moveTo(X(f[i]), Z(f[i + 1]))); g.closePath(); g.fill(); };
+    const GREEN = { grass: '#3f5a36', park: '#3f5f36', pitch: '#447040', wood: '#2f4a2c', scrub: '#3a4e30', churchyard: '#3c5636', allot: '#4a5a34', tree: '#35502f' };
+    for (const l of map.landuse || []) if (GREEN[l.k] && l.p.length >= 6) poly(l.p, GREEN[l.k]);
+    // real building footprints
+    for (const b of map.buildings || []) { const f = b.b.p; poly(f, b.type === 'hospital' ? '#5b6573' : b.type === 'school' ? '#6b5f55' : '#7a6a5e'); }
     // roads: casing then fill
     const roads = map.net.roads;
+    const COL = { a: '#f2c14e', b: '#f0e6c8', r: '#d9d9d9', s: '#a9a9a9', f: '#c9b8a0' };
     for (const pass of [0, 1]) for (const r of roads) {
-      g.strokeStyle = pass ? (r.kind === 'a' ? '#f2c14e' : r.kind === 'b' ? '#f0e6c8' : '#d9d9d9') : '#111';
-      g.lineWidth = (r.width + (pass ? 0 : 3)) * PX * 1.3; g.lineCap = 'round'; g.lineJoin = 'round';
+      if (r.kind === 'f' && !pass) continue;
+      g.strokeStyle = pass ? COL[r.kind] : '#111';
+      g.lineWidth = r.kind === 'f' ? 1 : (r.width + (pass ? 0 : 3)) * PX * 1.3; g.lineCap = 'round'; g.lineJoin = 'round';
       g.beginPath(); r.samples.forEach((p, i) => (i ? g.lineTo(X(p.x), Z(p.z)) : g.moveTo(X(p.x), Z(p.z)))); g.stroke();
     }
+    // shops
+    for (const s of map.shopSpots || []) { g.fillStyle = s.miniMart ? '#2fd37a' : '#e0a040'; g.beginPath(); g.arc(X(s.x), Z(s.z), 1.6, 0, 7); g.fill(); }
     this.labels = [];
-    for (const r of roads) if (r.name) {
+    const placed = [];
+    for (const r of [...roads].sort((a, b) => b.length - a.length)) if (r.name && r.kind !== 'f' && r.kind !== 's' && r.length > 40) {
       const p = r.samples[Math.floor(r.samples.length * 0.5)];
-      this.labels.push({ name: r.name, x: p.x, z: p.z, a: Math.atan2(p.tz, p.tx) });
+      if (placed.some((q) => q.name === r.name && Math.hypot(q.x - p.x, q.z - p.z) < 160)) continue;
+      const L = { name: r.name, x: p.x, z: p.z, a: Math.atan2(p.tz, p.tx) };
+      this.labels.push(L); placed.push(L);
     }
-    if (map.sites) this.labels.push({ name: 'Northern General', x: -380, z: -200, a: 0, site: true }, { name: 'Fir Vale School', x: 185, z: 300, a: 0, site: true }, { name: "St Cuthbert's", x: map.sites.church.at[0], z: map.sites.church.at[1], a: 0, site: true });
     this.base = c; this.X = X; this.Z = Z; this.t = 0;
   }
 
   update(player, cars, dez) {
     this.t -= 1; if (this.t > 0) return; this.t = 4; // ~15 fps is plenty
-    const g = this.ctx, S = this.el.width, R = S / 2, zoom = 1.5;
+    const g = this.ctx, S = this.el.width, R = S / 2, zoom = 0.75;
     g.save(); g.clearRect(0, 0, S, S);
     g.beginPath(); g.arc(R, R, R - 1, 0, Math.PI * 2); g.clip();
     g.fillStyle = '#2b3228'; g.fillRect(0, 0, S, S);
@@ -45,7 +53,7 @@ export class Minimap {
     g.font = 'bold 9px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle';
     for (const L of this.labels) {
       const lx = this.X(L.x) - this.X(player.pos.x), lz = this.Z(L.z) - this.Z(player.pos.z);
-      if (Math.abs(lx) > 90 || Math.abs(lz) > 90) continue;
+      if (Math.abs(lx) > 180 || Math.abs(lz) > 180) continue;
       g.save(); g.translate(lx, lz);
       let a = L.a + yaw; while (a > Math.PI / 2) a -= Math.PI; while (a < -Math.PI / 2) a += Math.PI;
       g.rotate(L.site ? -yaw : a - yaw);
@@ -53,7 +61,7 @@ export class Minimap {
       g.restore();
     }
     // cars & Dez
-    const dot = (x, z, col, r = 2.5) => { g.fillStyle = col; g.beginPath(); g.arc(this.X(x) - this.X(player.pos.x), this.Z(z) - this.Z(player.pos.z), r, 0, 7); g.fill(); };
+    const dot = (x, z, col, r = 5) => { g.fillStyle = col; g.beginPath(); g.arc(this.X(x) - this.X(player.pos.x), this.Z(z) - this.Z(player.pos.z), r, 0, 7); g.fill(); };
     for (const c of cars) if (c.car.visible) dot(c.x, c.z, '#ff5a5a');
     if (dez) dot(dez.x, dez.z, '#ffb400', 3);
     g.restore();

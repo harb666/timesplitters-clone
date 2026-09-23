@@ -21,8 +21,8 @@ const errors = [];
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`[${m.type()}] ${m.text()}`); });
 page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
 
-await page.goto('http://localhost:8765/index.html');
-await page.waitForFunction(() => !document.getElementById('btn-start').disabled, null, { timeout: 30000 });
+await page.goto('http://localhost:8765/index.html?sky=128');
+await page.waitForFunction(() => !document.getElementById('btn-start').disabled, null, { timeout: 180000 });
 await page.screenshot({ path: path.join(outDir, '01-title.png') });
 await page.tap('#btn-start');
 await page.waitForFunction(() => window.__firvale.running, null, { timeout: 60000 });
@@ -66,7 +66,7 @@ const view = async (name, x, z, yaw, pitch = 0) => {
 };
 // Real streets (positions relative to the road data)
 const roadView = async (name, road, i, frac, off, turn = 0) => {
-  await page.evaluate(([road, i, frac, off, turn]) => { const g = window.__firvale, r = g.map.net.byName(road, i), p = g.map.net.pointAt(r, r.length * frac, off * (r.half + 1.4), {}); g.player.spawn(p.x, p.z, Math.atan2(-p.tx, -p.tz) + turn); }, [road, i, frac, off, turn]);
+  await page.evaluate(([road, i, frac, off, turn]) => { const g = window.__firvale, r = g.map.net.longest(road), p = g.map.net.pointAt(r, r.length * frac, off * (r.half + 1.4), {}); g.player.spawn(p.x, p.z, Math.atan2(-p.tx, -p.tz) + turn); }, [road, i, frac, off, turn]);
   await page.waitForTimeout(900);
   await page.screenshot({ path: path.join(outDir, name) });
 };

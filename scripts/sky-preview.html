@@ -1,0 +1,15 @@
+<!doctype html><html><body style="margin:0;background:#000">
+<script type="importmap">{ "imports": { "three": "../src/lib/three.module.min.js" } }</script>
+<canvas id="c" width="1200" height="400"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { makeSky } from '../src/render/sky.js';
+const r = new THREE.WebGLRenderer({ canvas: document.getElementById('c') });
+r.toneMapping = THREE.ACESFilmicToneMapping; r.outputColorSpace = THREE.SRGBColorSpace; r.autoClear = false;
+const sky = makeSky(r, { quality: 'medium' });
+const scene = new THREE.Scene(); scene.background = sky.background;
+const cam = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+const views = [[2.5, 0.25], [-2.5, 0.3], [0.3, 1.2]];
+views.forEach(([yaw, pitch], i) => { cam.rotation.set(0, 0, 0); cam.rotation.order = 'YXZ'; cam.rotation.y = yaw; cam.rotation.x = pitch; cam.updateMatrixWorld(); r.setViewport(i * 400, 0, 400, 400); r.setScissor(i * 400, 0, 400, 400); r.setScissorTest(true); r.render(scene, cam); });
+window.done = true; window.horizon = sky.horizon.toArray();
+</script></body></html>

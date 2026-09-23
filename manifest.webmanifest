@@ -1,0 +1,14 @@
+{
+  "name": "Fir Vale",
+  "short_name": "Fir Vale",
+  "description": "An original stylised arcade FPS set in a fictional Fir Vale, Sheffield.",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#14161c",
+  "theme_color": "#14161c",
+  "icons": [
+    { "src": "assets/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

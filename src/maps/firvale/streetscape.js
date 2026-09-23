@@ -23,7 +23,7 @@ export function nameAtlas(names) {
 }
 function quadUV(w, h, c) {
   const g = new THREE.BoxGeometry(w, h, 0.04); const uv = g.attributes.uv;
-  for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; const a = uv.getX(i), b = uv.getY(i); if (f === 4 || f === 5) uv.setXY(i, c.u0 + (c.u1 - c.u0) * (f === 5 ? 1 - a : a), c.v0 + (c.v1 - c.v0) * b); else uv.setXY(i, c.u0 + 0.001, c.v0 + 0.001); }
+  for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; const a = uv.getX(i), b = uv.getY(i); if (f === 4 || f === 5) uv.setXY(i, c.u0 + (c.u1 - c.u0) * a, c.v0 + (c.v1 - c.v0) * b); else uv.setXY(i, c.u0 + 0.001, c.v0 + 0.001); }
   return g;
 }
 

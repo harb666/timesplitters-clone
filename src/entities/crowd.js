@@ -37,67 +37,97 @@ const T = (g, x, y, z) => g.translate(x, y, z);
 function lathe(profile, seg = 8) { return new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), seg); }
 function limb(r0, r1, len, seg = 6) { const g = new THREE.CylinderGeometry(r1, r0, len, seg, 1); return g; }
 
-function buildTemplate() {
+function buildTemplate(q = 1) {
+  // q = 1: close-up detail; q = 0: the cheaper version for people further away
+  const S = (hi, lo) => (q ? hi : lo);
   const P = [];
   // pelvis + torso (elliptical cross-section)
-  const hips = lathe([[0.0, 0.84], [0.15, 0.86], [0.17, 0.95], [0.155, 1.02], [0.0, 1.02]], 10); hips.scale(1, 1, 0.72);
+  const hips = lathe([[0.0, 0.83], [0.1, 0.84], [0.15, 0.87], [0.172, 0.93], [0.168, 0.98], [0.152, 1.03], [0.0, 1.03]], S(14, 8)); hips.scale(1, 1, 0.7);
   P.push(part(hips, 0, 3));
-  const torso = lathe([[0.0, 1.0], [0.155, 1.0], [0.15, 1.12], [0.165, 1.28], [0.19, 1.4], [0.13, 1.47], [0.06, 1.5], [0.0, 1.5]], 10); torso.scale(1, 1, 0.66);
+  // torso: waist, ribcage, chest, sloping shoulders (trapezius) into the neck
+  const torso = lathe([[0.0, 1.0], [0.152, 1.0], [0.143, 1.07], [0.146, 1.14], [0.163, 1.24], [0.18, 1.33], [0.19, 1.39], [0.172, 1.44], [0.12, 1.485], [0.065, 1.51], [0.0, 1.515]], S(14, 8)); torso.scale(1, 1, 0.64);
   P.push(part(torso, 1, 2));
   // coat: longer body down to mid-thigh
-  const coat = lathe([[0.0, 0.66], [0.2, 0.66], [0.19, 0.95], [0.175, 1.15], [0.2, 1.4], [0.135, 1.48], [0.0, 1.49]], 10); coat.scale(1.02, 1, 0.72);
+  const coat = lathe([[0.0, 0.66], [0.2, 0.66], [0.19, 0.95], [0.175, 1.15], [0.2, 1.4], [0.135, 1.48], [0.0, 1.49]], S(10, 7)); coat.scale(1.02, 1, 0.72);
   P.push(part(coat, 1, 5, 6));
   // neck + head
   P.push(part(T(new THREE.CylinderGeometry(0.05, 0.055, 0.1, 6, 1, true), 0, 1.53, 0), 2, 0));
-  const head = new THREE.SphereGeometry(0.105, 14, 11); head.scale(0.92, 1.12, 1.0); T(head, 0, 1.66, 0.01);
+  // head: jaw narrowing to the chin, flatter at the back of the skull's base
+  const headShape = (g) => {
+    const q = g.attributes.position;
+    for (let i = 0; i < q.count; i++) {
+      const y = q.getY(i), z = q.getZ(i);
+      if (y < 0) { const k = Math.pow(-y / 0.118, 1.6); q.setX(i, q.getX(i) * (1 - 0.24 * k)); if (z < 0) q.setZ(i, z * (1 - 0.3 * k)); else q.setZ(i, z * (1 + 0.04 * k)); }
+    }
+    g.computeVertexNormals(); return g;
+  };
+  const head = headShape(new THREE.SphereGeometry(0.105, S(16, 10), S(12, 7)).scale(0.92, 1.12, 1.0)); T(head, 0, 1.66, 0.01);
   P.push(part(head, 2, 0));
   // painted face: a patch just proud of the front of the head, UV-mapped to the face atlas
-  const face = new THREE.SphereGeometry(0.1062, 10, 8, Math.PI / 2 - 0.95, 1.9, 0.62, 1.55); face.scale(0.92, 1.12, 1.0); T(face, 0, 1.66, 0.01);
+  const face = headShape(new THREE.SphereGeometry(0.1062, S(10, 6), S(8, 5), Math.PI / 2 - 0.95, 1.9, 0.62, 1.55).scale(0.92, 1.12, 1.0)); T(face, 0, 1.66, 0.01);
   P.push(part(face, 2, 7));
   const nose = new THREE.ConeGeometry(0.016, 0.042, 5); nose.rotateX(-1.25); nose.scale(1, 1, 0.9);
   P.push(part(T(nose, 0, 1.652, 0.118), 2, 0));                                                         // nose
   for (const sx of [-1, 1]) P.push(part(T(new THREE.SphereGeometry(0.022, 4, 3).scale(0.5, 1, 1), sx * 0.098, 1.66, 0.0), 2, 0)); // ears
   // hair: short crop, long hair, headscarf, cap, beard, hood
-  const crop = new THREE.SphereGeometry(0.112, 14, 6, 0, Math.PI * 2, 0, Math.PI * 0.52); crop.scale(0.94, 1.08, 1.02); T(crop, 0, 1.675, -0.005);
+  // hair caps with a proper hairline: high over the forehead, down to the
+  // ears at the sides and the nape at the back
+  const hairline = (g, front, side, back) => {
+    const q = g.attributes.position;
+    for (let i = 0; i < q.count; i++) {
+      const x = q.getX(i), y = q.getY(i), z = q.getZ(i), r = Math.hypot(x, y, z) || 1;
+      const a = Math.abs(Math.atan2(x, z)) / Math.PI, lim = a < 0.5 ? front + (side - front) * (a / 0.5) : side + (back - side) * ((a - 0.5) / 0.5);
+      const th = Math.acos(Math.max(-1, Math.min(1, y / r)));
+      if (th > lim) { const h = Math.hypot(x, z) || 1, k = Math.sin(lim) * r / h; q.setXYZ(i, x * k, Math.cos(lim) * r, z * k); }
+    }
+    g.computeVertexNormals(); return g;
+  };
+  const crop = hairline(new THREE.SphereGeometry(0.112, S(14, 8), S(8, 5), 0, Math.PI * 2, 0, Math.PI * 0.58), 0.3 * Math.PI, 0.5 * Math.PI, 0.56 * Math.PI); crop.scale(0.94, 1.08, 1.02); T(crop, 0, 1.675, -0.005);
   P.push(part(crop, 2, 1, 9));
-  const longHair = new THREE.SphereGeometry(0.118, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.6); longHair.scale(0.97, 1.1, 1.05); T(longHair, 0, 1.67, -0.012);
+  const longHair = hairline(new THREE.SphereGeometry(0.118, S(14, 8), S(9, 5), 0, Math.PI * 2, 0, Math.PI * 0.66), 0.28 * Math.PI, 0.62 * Math.PI, 0.66 * Math.PI); longHair.scale(0.97, 1.1, 1.05); T(longHair, 0, 1.67, -0.012);
   P.push(part(longHair, 2, 1, 1));
   P.push(part(T(new THREE.BoxGeometry(0.2, 0.3, 0.06), 0, 1.5, -0.075), 2, 1, 1));                    // hair down the back
-  const scarf = new THREE.SphereGeometry(0.128, 14, 10); scarf.scale(0.96, 1.12, 0.92); T(scarf, 0, 1.655, -0.05);
+  const scarf = new THREE.SphereGeometry(0.128, S(14, 8), S(10, 6)); scarf.scale(0.96, 1.12, 0.92); T(scarf, 0, 1.655, -0.05);
   P.push(part(scarf, 2, 5, 2));
-  P.push(part(T(lathe([[0.0, 1.38], [0.2, 1.4], [0.13, 1.5], [0.06, 1.58], [0.0, 1.58]], 10).scale(1, 1, 0.8), 0, 0, -0.01), 1, 5, 2)); // drape over shoulders
-  const cap = new THREE.SphereGeometry(0.116, 9, 3, 0, Math.PI * 2, 0, Math.PI * 0.42); T(cap, 0, 1.69, 0);
+  P.push(part(T(lathe([[0.0, 1.38], [0.2, 1.4], [0.13, 1.5], [0.06, 1.58], [0.0, 1.58]], S(10, 7)).scale(1, 1, 0.8), 0, 0, -0.01), 1, 5, 2)); // drape over shoulders
+  const cap = new THREE.SphereGeometry(0.116, S(9, 6), 3, 0, Math.PI * 2, 0, Math.PI * 0.42); T(cap, 0, 1.69, 0);
   P.push(part(cap, 2, 5, 3)); P.push(part(T(new THREE.BoxGeometry(0.16, 0.012, 0.1), 0, 1.72, 0.12), 2, 5, 3));
-  const beard = new THREE.SphereGeometry(0.1, 12, 5, 0, Math.PI * 2, Math.PI * 0.45, Math.PI * 0.4); beard.scale(0.95, 1.1, 1.05); T(beard, 0, 1.655, 0.02);
+  // beard along the jaw and chin (leaves the mouth clear)
+  const beard = headShape(new THREE.SphereGeometry(0.1, S(12, 7), S(5, 3), Math.PI / 2 - 1.3, 2.6, 1.9, 0.95).scale(0.92 * 1.08, 1.12 * 1.03, 1.08)); T(beard, 0, 1.66, 0.01);
   P.push(part(beard, 2, 1, 5));
-  const hood = new THREE.SphereGeometry(0.13, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.62); hood.scale(1, 1.1, 1.05); T(hood, 0, 1.66, -0.03);
+  const hood = new THREE.SphereGeometry(0.13, S(14, 8), S(7, 4), 0, Math.PI * 2, 0, Math.PI * 0.62); hood.scale(1, 1.1, 1.05); T(hood, 0, 1.66, -0.03);
   P.push(part(hood, 2, 2, 11));
   // arms (upper: top colour, forearm: top colour sleeve + skin hand)
   for (const sx of [-1, 1]) {
     const up = sx < 0 ? 3 : 5, fo = sx < 0 ? 4 : 6;
-    P.push(part(T(new THREE.SphereGeometry(0.058, 6, 4), sx * J.shoulderX, J.shoulderY - 0.02, 0), up, 2));
-    P.push(part(T(limb(0.052, 0.046, 0.3), sx * (J.shoulderX + 0.012), J.shoulderY - 0.15, 0), up, 2));
-    P.push(part(T(limb(0.045, 0.036, 0.26), sx * (J.shoulderX + 0.02), J.elbowY - 0.13, 0), fo, 2));
-    P.push(part(T(new THREE.SphereGeometry(0.042, 5, 4).scale(0.8, 1.2, 1), sx * (J.shoulderX + 0.02), J.elbowY - 0.3, 0.005), fo, 0));
+    P.push(part(T(new THREE.SphereGeometry(0.06, S(8, 5), S(6, 4)).scale(1, 1, 0.9), sx * J.shoulderX, J.shoulderY - 0.02, 0), up, 2));
+    P.push(part(T(lathe([[0.046, -0.15], [0.05, -0.08], [0.054, 0.02], [0.056, 0.15]], S(8, 5)), sx * (J.shoulderX + 0.012), J.shoulderY - 0.15, 0), up, 2));
+    P.push(part(T(lathe([[0.034, -0.13], [0.04, -0.06], [0.047, 0.06], [0.046, 0.13]], S(8, 5)), sx * (J.shoulderX + 0.02), J.elbowY - 0.13, 0), fo, 2));
+    // hand: palm + fingers as one mitten, and a thumb
+    P.push(part(T(new THREE.SphereGeometry(1, S(8, 5), S(6, 4)).scale(0.022, 0.07, 0.042), sx * (J.shoulderX + 0.022), J.elbowY - 0.33, 0.005), fo, 0));
+    if (q) P.push(part(T(new THREE.CapsuleGeometry(0.011, 0.035, 2, 5).rotateX(-0.5), sx * (J.shoulderX + 0.02), J.elbowY - 0.31, 0.04), fo, 0));
     // carrier bag in the right hand
     if (sx > 0) P.push(part(T(new THREE.BoxGeometry(0.2, 0.3, 0.1), sx * (J.shoulderX + 0.04), J.elbowY - 0.5, 0.0), fo, 5, 10));
   }
   // legs + shoes
   for (const sx of [-1, 1]) {
     const th = sx < 0 ? 7 : 9, sh = sx < 0 ? 8 : 10;
-    P.push(part(T(limb(0.078, 0.064, 0.44), sx * J.hipX, J.hip - 0.21, 0), th, 3));
-    P.push(part(T(limb(0.06, 0.047, 0.44), sx * J.hipX, J.knee - 0.22, 0), sh, 3));
-    P.push(part(T(new THREE.BoxGeometry(0.1, 0.075, 0.25), sx * J.hipX, 0.04, 0.04), sh, 4));
-    P.push(part(T(new THREE.BoxGeometry(0.105, 0.02, 0.26), sx * J.hipX, 0.008, 0.04), sh, 6));
+    P.push(part(T(lathe([[0.058, -0.22], [0.066, -0.12], [0.074, 0.04], [0.08, 0.16], [0.08, 0.22]], S(9, 6)), sx * J.hipX, J.hip - 0.21, 0), th, 3));
+    // shin with the calf muscle behind
+    const shin = lathe([[0.042, -0.2], [0.048, -0.1], [0.058, 0.04], [0.06, 0.12], [0.056, 0.22]], S(9, 6)); shin.translate(0, 0, -0.008);
+    P.push(part(T(shin, sx * J.hipX, J.knee - 0.22, 0), sh, 3));
+    // shoe: rounded upper on a sole, toe slightly up
+    P.push(part(T(new THREE.SphereGeometry(1, S(9, 6), S(6, 4), 0, Math.PI * 2, 0, Math.PI * 0.55).scale(0.05, 0.085, 0.132), sx * J.hipX, 0.02, 0.045), sh, 4));
+    P.push(part(T(new THREE.CylinderGeometry(1, 1, 1, S(10, 6)).scale(0.052, 0.024, 0.134), sx * J.hipX, 0.012, 0.045), sh, 6));
   }
   // long skirt (static below the hips; the legs swing inside it)
-  P.push(part(lathe([[0.0, 0.2], [0.26, 0.12], [0.24, 0.3], [0.19, 0.7], [0.165, 0.95], [0.0, 0.96]], 9).scale(1, 1, 0.85), 0, 3, 4));
+  P.push(part(lathe([[0.0, 0.2], [0.26, 0.12], [0.24, 0.3], [0.19, 0.7], [0.165, 0.95], [0.0, 0.96]], S(9, 7)).scale(1, 1, 0.85), 0, 3, 4));
   // backpack
   P.push(part(T(new THREE.BoxGeometry(0.3, 0.38, 0.14), 0, 1.22, -0.17), 1, 5, 7));
   // sleeping bag over the legs (for people sitting on the ground)
-  const bag = new THREE.CapsuleGeometry(0.2, 1.0, 2, 6); bag.rotateX(Math.PI / 2); bag.scale(1.25, 0.6, 1); T(bag, 0, 0.14, 0.45);
+  const bag = new THREE.CapsuleGeometry(0.2, 1.0, 2, S(6, 4)); bag.rotateX(Math.PI / 2); bag.scale(1.25, 0.6, 1); T(bag, 0, 0.14, 0.45);
   P.push(part(bag, 0, 5, 8));
-  const g = mergeParts(P); console.log('crowd template tris', g.attributes.position.count / 3); return g;
+  return mergeParts(P);
 }
 function mergeParts(list) {
   let n = 0; for (const g of list) n += g.attributes.position.count;
@@ -110,9 +140,61 @@ function mergeParts(list) {
   return out;
 }
 
+
+// Surface detail painted in the shader (no textures): cloth weave and folds,
+// denim twill, hair strands, skin variation, and ambient occlusion where
+// limbs meet the body; roughness per material (skin, hair, leather, cloth).
+const FRAG_HEAD = /* glsl */`
+varying vec3 vRest; varying vec3 vRestN; varying float vSlot; varying float vPart;
+float crowdRough;
+float h3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vn(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+`;
+const FRAG_BODY = /* glsl */`
+  {
+    int sl = int(vSlot + 0.5); float pt = vPart;
+    float fine = vn(vRest * 140.0), mid = vn(vRest * vec3(22.0, 9.0, 22.0)), big = vn(vRest * 4.0);
+    crowdRough = 0.85;
+    if (sl == 3) {                                    // trousers / jeans / skirts: twill + worn fade on the thighs and knees
+      float tw = 0.5 + 0.5 * sin((vRest.x * 1.0 + vRest.y) * 700.0 + fine * 3.0);
+      diffuseColor.rgb *= 0.86 + 0.1 * tw + 0.1 * mid;
+      float wear = smoothstep(0.35, 0.8, vRest.z / 0.08) * (smoothstep(0.35, 0.55, vRest.y) - smoothstep(0.8, 0.95, vRest.y));
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.35 + 0.03, wear * 0.35);
+      float crease = smoothstep(0.7, 1.0, sin(vRest.y * 48.0 + mid * 5.0)) * (1.0 - smoothstep(0.1, 0.35, abs(vRest.y - 0.5)));
+      diffuseColor.rgb *= 1.0 - crease * 0.18;
+    } else if (sl == 2 || sl == 5) {                  // knitwear / jackets / coats: weave + folds at the elbows and waist
+      diffuseColor.rgb *= 0.88 + 0.1 * fine + 0.08 * mid;
+      float fold = smoothstep(0.6, 1.0, sin(vRest.y * 55.0 + big * 6.0)) * (smoothstep(0.95, 1.1, vRest.y) - smoothstep(1.12, 1.25, vRest.y));
+      diffuseColor.rgb *= 1.0 - fold * 0.16;
+      if (pt == 1.0 && vRest.z > 0.06 && abs(vRest.x) < 0.006) diffuseColor.rgb *= 0.55;    // zip / placket
+    } else if (sl == 1) {                             // hair: strands running down the head
+      float st = 0.5 + 0.5 * sin((vRest.x + vRest.z * 0.7) * 520.0 + vn(vRest * 30.0) * 4.0);
+      diffuseColor.rgb *= 0.86 + 0.22 * st * (0.6 + 0.4 * mid);
+      crowdRough = 0.45;
+    } else if (sl == 0) {                             // skin: blotchy variation, a little warmth
+      diffuseColor.rgb *= 0.95 + 0.08 * mid; diffuseColor.r *= 1.0 + 0.04 * big;
+      crowdRough = 0.55;
+    } else if (sl == 4 || sl == 6) { crowdRough = 0.38; diffuseColor.rgb *= 0.92 + 0.12 * fine; }
+    // ambient occlusion
+    float ao = 1.0;
+    if (pt > 2.5 && pt < 6.5) { float sx = pt < 4.5 ? -1.0 : 1.0; ao *= 1.0 - 0.22 * clamp(dot(vRestN, vec3(-sx, 0.0, 0.0)), 0.0, 1.0); }
+    if (pt > 6.5) { float sx = pt < 8.5 ? -1.0 : 1.0; ao *= 1.0 - 0.18 * clamp(dot(vRestN, vec3(-sx, 0.0, 0.0)), 0.0, 1.0); }
+    if (pt == 1.0) ao *= 1.0 - 0.2 * smoothstep(0.12, 0.17, abs(vRest.x)) * smoothstep(1.1, 1.18, vRest.y) * (1.0 - smoothstep(1.34, 1.4, vRest.y));
+    if (pt == 2.0 && vRest.y < 1.575 && sl != 1) ao *= 0.72;                                 // under the chin / neck
+    if (pt == 0.0) ao *= 1.0 - 0.25 * (1.0 - smoothstep(0.84, 0.9, vRest.y));
+    ao *= 0.82 + 0.18 * smoothstep(0.0, 0.9, vRest.y);                                      // closer to the ground
+    diffuseColor.rgb *= ao;
+  }
+`;
+
 const VERT_HEAD = /* glsl */`
 attribute vec3 pso; attribute vec2 fuv;
 varying vec2 vFaceUv; varying float vFace;
+varying vec3 vRest; varying vec3 vRestN; varying float vSlot; varying float vPart;
 attribute vec4 iA; attribute vec4 iB; attribute vec4 iC; attribute vec4 iD; attribute vec4 iE; attribute vec4 iF;
 varying vec3 vSlotCol;
 vec3 skP;
@@ -172,6 +254,7 @@ const VERT_BODY = /* glsl */`
     cols[0] = iA.rgb; cols[1] = iB.rgb; cols[2] = iC.rgb; cols[3] = iD.rgb; cols[4] = iE.rgb; cols[5] = iF.rgb; cols[6] = vec3(0.02, 0.018, 0.016);
     vSlotCol = cols[int(min(slot, 6.0) + 0.5)];
     vFaceUv = fuv; vFace = slot > 6.5 ? 1.0 + float((flags >> 20) & 7) : 0.0;
+    vRest = position; vRestN = normal; vSlot = slot; vPart = part;
     if (slot > 6.5) vSlotCol = iA.rgb;
   }
 `;
@@ -402,25 +485,31 @@ export class Crowd {
 
   // ------------------------------------------------------------ meshes
   buildMeshes() {
-    const geo = buildTemplate(), N = this.people.length;
-    const ig = new THREE.BufferGeometry();
-    for (const k of ['position', 'normal', 'pso', 'fuv']) ig.setAttribute(k, geo.attributes[k]);
-    this.attrs = {};
-    for (const k of ['iA', 'iB', 'iC', 'iD', 'iE', 'iF']) { const a = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4); a.setUsage(THREE.DynamicDrawUsage); ig.setAttribute(k, a); this.attrs[k] = a; }
+    const N = this.people.length;
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0 });
     mat.onBeforeCompile = (sh) => {
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_HEAD)
         .replace('#include <beginnormal_vertex>', VERT_BODY)
         .replace('#include <begin_vertex>', 'vec3 transformed = skP;');
       sh.uniforms.faceMap = { value: faceAtlas() };
-      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSlotCol; varying vec2 vFaceUv; varying float vFace; uniform sampler2D faceMap;')
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vSlotCol; varying vec2 vFaceUv; varying float vFace; uniform sampler2D faceMap;\n' + FRAG_HEAD)
         .replace('#include <color_fragment>', `diffuseColor.rgb = vSlotCol;
-          if (vFace > 0.5) { vec4 t = texture2D(faceMap, vec2((clamp(vFaceUv.x, 0.0, 1.0) + floor(vFace - 0.5)) / 6.0, vFaceUv.y)); diffuseColor.rgb = mix(vSlotCol, t.rgb, t.a); }`);
+          if (vFace > 0.5) { vec4 t = texture2D(faceMap, vec2((clamp(vFaceUv.x, 0.0, 1.0) + floor(vFace - 0.5)) / 6.0, vFaceUv.y)); diffuseColor.rgb = mix(vSlotCol, t.rgb, t.a); }
+          ` + FRAG_BODY)
+        .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = crowdRough;');
     };
-    mat.customProgramCacheKey = () => 'crowd-v2';
-    this.mesh = new THREE.InstancedMesh(ig, mat, N);
-    this.mesh.frustumCulled = false; this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.scene.add(this.mesh);
+    mat.customProgramCacheKey = () => 'crowd-v3';
+    // two levels of detail sharing one material: close-up and further away
+    this.lods = [1, 0].map((q) => {
+      const geo = buildTemplate(q), ig = new THREE.BufferGeometry(), attrs = {};
+      for (const k of ['position', 'normal', 'pso', 'fuv']) ig.setAttribute(k, geo.attributes[k]);
+      for (const k of ['iA', 'iB', 'iC', 'iD', 'iE', 'iF']) { const a = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4); a.setUsage(THREE.DynamicDrawUsage); ig.setAttribute(k, a); attrs[k] = a; }
+      const mesh = new THREE.InstancedMesh(ig, mat, N);
+      mesh.frustumCulled = false; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.count = 0;
+      this.scene.add(mesh);
+      return { mesh, attrs, n: 0, tris: geo.attributes.position.count / 3 };
+    });
+    this.mesh = this.lods[0].mesh;
     // soft contact shadows
     const shMat = new THREE.MeshBasicMaterial({ map: blobShadowTexture(), transparent: true, depthWrite: false });
     this.shadows = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), shMat, N);
@@ -460,8 +549,9 @@ export class Crowd {
 
   update(dt, player) {
     const net = this.net, px = player.pos.x, pz = player.pos.z;
-    let vis = 0, sv = 0, cv = 0;
-    const A = this.attrs, R = Math.random;
+    let sv = 0, cv = 0;
+    const R = Math.random;
+    for (const L of this.lods) L.n = 0;
     for (const p of this.people) {
       const dx = p.x - px, dz = p.z - pz, dist = Math.hypot(dx, dz);
       p.fear -= dt; p.cower -= dt; p.greetT -= dt; p.talk -= dt;
@@ -504,11 +594,11 @@ export class Crowd {
       if (dist > 100) continue;
       const pose = p.cower > 0 ? 3 : p.pose;
       // instance
-      const i = vis++;
+      const L = this.lods[dist < 22 ? 0 : 1], i = L.n++, A = L.attrs;
       this.q.setFromAxisAngle(this.up, p.yawS);
       const lift = p.wheel ? 0.1 : 0;
       this.m4.compose(this.v.set(p.x, p.y + lift, p.z), this.q, this.sv.set(p.scale, p.scale, p.scale));
-      this.mesh.setMatrixAt(i, this.m4);
+      L.mesh.setMatrixAt(i, this.m4);
       const setA = (a, hex, w) => { this.col.set(hex); a.setXYZW(i, this.col.r, this.col.g, this.col.b, w); };
       setA(A.iA, p.skin, p.phase); setA(A.iB, p.hair, gait); setA(A.iC, p.top, pose); setA(A.iD, p.bottom, p.flags); setA(A.iE, p.shoes, gest); setA(A.iF, p.accent, look);
       // shadow blob
@@ -517,9 +607,9 @@ export class Crowd {
       this.shadows.setMatrixAt(sv++, this.m4);
       if (p.wheel) { this.m4.compose(this.v.set(p.x, p.y, p.z), this.q, this.sv.set(1, 1, 1)); this.chairMesh.setMatrixAt(cv++, this.m4); }
     }
-    this.mesh.count = vis; this.shadows.count = sv; this.chairMesh.count = cv;
-    this.mesh.instanceMatrix.needsUpdate = true; this.shadows.instanceMatrix.needsUpdate = true; this.chairMesh.instanceMatrix.needsUpdate = true;
-    for (const k in A) A[k].needsUpdate = true;
+    for (const L of this.lods) { L.mesh.count = L.n; L.mesh.instanceMatrix.needsUpdate = true; for (const k in L.attrs) L.attrs[k].needsUpdate = true; }
+    this.shadows.count = sv; this.chairMesh.count = cv;
+    this.shadows.instanceMatrix.needsUpdate = true; this.chairMesh.instanceMatrix.needsUpdate = true;
   }
 
   nextRoad(p) {

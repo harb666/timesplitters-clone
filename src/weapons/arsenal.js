@@ -8,7 +8,7 @@ import { settings } from '../core/settings.js';
 
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _n = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3();
 
-const METAL = new Set(['lamp', 'postbox', 'pole', 'shelter', 'bollard', 'barrier', 'skip', 'loo', 'parked-car', 'car']);
+const METAL = new Set(['drone', 'lamp', 'postbox', 'pole', 'shelter', 'bollard', 'barrier', 'skip', 'loo', 'parked-car', 'car']);
 const WOOD = new Set(['tree', 'bench']);
 
 export class Arsenal {
@@ -123,7 +123,7 @@ export class Arsenal {
     const n = _n.set(0, 0, 0);
     if (res.normal) n.fromArray(res.normal); else if (res.normalAxis >= 0) n.setComponent(res.normalAxis, res.normalSign); else n.set(0, 1, 0);
     const box = res.box, mat = this.material(box, p);
-    if (box && box.owner && (box.tag === 'car' || box.tag === 'npc')) { box.owner.onShot?.(p); g.hud.hitmarker(); }
+    if (box && box.owner && (box.tag === 'car' || box.tag === 'npc' || box.tag === 'drone')) { box.owner.onShot?.(p, damage); g.hud.hitmarker(); }
     g.effects.impact(p.clone(), n.clone(), mat);
     const impactName = { stone: 'concrete', paving: 'concrete', grass: 'dirt' }[mat] || mat;
     play('impact_' + impactName, { pos: p.clone(), gain: 1 });

@@ -140,6 +140,34 @@ export class RoadNetwork {
     return out;
   }
 
+  // Shortest route along the drivable streets between two points: a
+  // polyline of [x, z] (Dijkstra over the junction graph).
+  route(ax, az, bx, bz) {
+    const nodePos = (id) => { const e = this.nodes.get(id).roads[0], S = e.road.samples, p = e.end === 'a' ? S[0] : S[S.length - 1]; return [p.x, p.z]; };
+    const closest = (x, z) => { let best = null, bd = Infinity; for (const id of this.nodes.keys()) { const [nx, nz] = nodePos(id), d = (nx - x) ** 2 + (nz - z) ** 2; if (d < bd) { bd = d; best = id; } } return best; };
+    const A = closest(ax, az), B = closest(bx, bz);
+    const dist = new Map([[A, 0]]), prev = new Map(), done = new Set();
+    const open = [A];
+    while (open.length) {
+      let bi = 0; for (let i = 1; i < open.length; i++) if (dist.get(open[i]) < dist.get(open[bi])) bi = i;
+      const u = open.splice(bi, 1)[0]; if (done.has(u)) continue; done.add(u);
+      if (u === B) break;
+      for (const e of this.nodes.get(u).roads) {
+        const r = e.road, v = e.end === 'a' ? r.b : r.a; if (v === undefined || !this.nodes.has(v)) continue;
+        const nd = dist.get(u) + r.length * (r.kind === 'a' ? 0.9 : 1);
+        if (nd < (dist.get(v) ?? Infinity)) { dist.set(v, nd); prev.set(v, { u, r, fwd: e.end === 'a' }); open.push(v); }
+      }
+    }
+    const out = [];
+    if (!prev.has(B) && A !== B) return [[ax, az], [bx, bz]];
+    const legs = []; for (let v = B; v !== A; v = prev.get(v).u) legs.push(prev.get(v));
+    legs.reverse();
+    out.push([ax, az]);
+    for (const { r, fwd } of legs) { const S = fwd ? r.samples : [...r.samples].reverse(); for (const p of S) out.push([p.x, p.z]); }
+    out.push([bx, bz]);
+    return out;
+  }
+
   // ------------------------------------------------------------ geometry
   build(batch, M) {
     const roads = [...this.roads].sort((a, b) => RANK[a.kind] - RANK[b.kind]);

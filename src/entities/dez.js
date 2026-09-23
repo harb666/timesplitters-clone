@@ -64,6 +64,17 @@ export class Dez {
     this.interactRadius = 2.6;
   }
 
+  setPath(path) {
+    this.path = path; this.cum = [0];
+    for (let i = 1; i < path.length; i++) this.cum.push(this.cum[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+    this.len = this.cum[this.cum.length - 1];
+  }
+  // Race along a route (mission 4). He's quick, but he takes the long way
+  // round the corners.
+  startRace(path, speed = 8.6) { if (!this._home) this._home = this.path; this.setPath(path); this.s = 0; this.dir = 1; this.state = 'race'; this.raceSpeed = speed; this.at(0); this.say('Three… two… FULL TILT!', 2.5); }
+  endRace() { if (this._home) { this.setPath(this._home); this._home = null; } this.s = this.len / 2; this.state = 'patrol'; this.at(this.s); }
+  get raceDone() { return this.state === 'raceDone'; }
+
   at(s) {
     s = Math.max(0, Math.min(this.len, s));
     let i = 0; while (i < this.path.length - 2 && this.cum[i + 1] < s) i++;
@@ -88,6 +99,7 @@ export class Dez {
 
   onShot() {
     this.hitFlash = 0.25;
+    if (this.state === 'race') { this.say('Cheating! I\'m telling the race stewards! …I am the race stewards!', 2.5); return; }
     voiceBark(VOICE, 'yelp', this.x, G(this.x, this.z) + 1.2, this.z);
     this.say(pick(LINES.shot), 2.4);
     this.startFlee(null, true);
@@ -95,6 +107,7 @@ export class Dez {
 
   onLoudNoise(px, pz) {
     this._lastPlayer = { x: px, z: pz };
+    if (this.state === 'race' || this.state === 'raceDone') return;
     if (this.state === 'flee') return;
     const d = Math.hypot(px - this.x, pz - this.z);
     if (d < 28) this.startFlee(pz);
@@ -138,13 +151,25 @@ export class Dez {
     } else if (this.state === 'talk') {
       target = 0;
       if (this.stateT <= 0) this.state = 'patrol';
+    } else if (this.state === 'race') {
+      // slows on bends
+      const ahead = Math.min(this.len, this.s + 6); let i = 0; while (i < this.path.length - 2 && this.cum[i + 1] < ahead) i++;
+      const [ax, az] = this.path[i], [bx, bz] = this.path[i + 1]; const L = Math.hypot(bx - ax, bz - az) || 1;
+      const turn = 1 - Math.abs(((bx - ax) * this.tx + (bz - az) * this.tz) / L);
+      target = this.raceSpeed * (1 - Math.min(0.5, turn * 1.2));
+      this.wheelieT -= dt; if (this.wheelieT <= 0 && toP < 25) { this.say(pick(['Eat my dust!', 'Racing line! RACING LINE!', 'Is that all you\'ve got?', 'Nan, if you\'re watching: I\'m winning!']), 2); this.wheelieT = 6 + Math.random() * 5; }
+      if (this.s >= this.len - 0.6) { this.state = 'raceDone'; this.say('WINNER! Dez Full Tilt Hartley! Nobody\'s surprised!', 3.5); }
+    } else if (this.state === 'raceDone') {
+      target = 0;
     } else if (this.state === 'flee') {
       target = 7.5;
       if (this.stateT <= 0) { this.state = 'patrol'; this.dir *= -1; if (toP < 20) this.say(pick(LINES.calm), 3); }
     }
 
-    if (this.s >= this.len - 0.5) this.dir = -1;
-    if (this.s <= 0.5) this.dir = 1;
+    if (this.state !== 'race' && this.state !== 'raceDone') {
+      if (this.s >= this.len - 0.5) this.dir = -1;
+      if (this.s <= 0.5) this.dir = 1;
+    }
 
     this.speed += (target - this.speed) * Math.min(1, dt * (this.state === 'flee' ? 3 : 2));
     const ns = this.s + this.dir * this.speed * dt;

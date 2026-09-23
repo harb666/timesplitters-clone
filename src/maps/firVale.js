@@ -244,7 +244,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
     spawn,
     startShop: { x: mm.front[0], zc: mm.front[1], y: mm.gF },
     interactables, props, beaconMat, meshCount: meshes.length,
-    surfaceAt, net, dezPath, updateLOD, cansAt,
+    surfaceAt, net, dezPath, updateLOD, cansAt, churchAt: churchB ? [churchB.o.cx, churchB.o.cz] : null,
     bounds: BOUNDS, shopSpots: fp.shopSpots, buildings: fp.list, landuse: OSM.landuse, junctions, nearJunction,
   };
 }

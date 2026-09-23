@@ -39,7 +39,7 @@ export class Minimap {
     this.base = c; this.X = X; this.Z = Z; this.t = 0;
   }
 
-  update(player, cars, dez) {
+  update(player, cars, dez, target) {
     this.t -= 1; if (this.t > 0) return; this.t = 4; // ~15 fps is plenty
     const g = this.ctx, S = this.el.width, R = S / 2, zoom = 0.75;
     g.save(); g.clearRect(0, 0, S, S);
@@ -63,8 +63,17 @@ export class Minimap {
     // cars & Dez
     const dot = (x, z, col, r = 5) => { g.fillStyle = col; g.beginPath(); g.arc(this.X(x) - this.X(player.pos.x), this.Z(z) - this.Z(player.pos.z), r, 0, 7); g.fill(); };
     for (const c of cars) if (c.car.visible) dot(c.x, c.z, '#ff5a5a');
-    if (dez) dot(dez.x, dez.z, '#ffb400', 3);
+    if (dez) dot(dez.x, dez.z, '#ffb400', 6);
     g.restore();
+    // objective marker (clamped to the rim when off the map)
+    if (target) {
+      const dx = (target[0] - player.pos.x) * PX * zoom, dz = (target[1] - player.pos.z) * PX * zoom;
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      let mx = dx * c - dz * s, mz = dx * s + dz * c; const l = Math.hypot(mx, mz), lim = R - 10;
+      if (l > lim) { mx *= lim / l; mz *= lim / l; }
+      g.fillStyle = '#2fe0c8'; g.strokeStyle = '#000'; g.lineWidth = 2;
+      g.beginPath(); g.arc(R + mx, R + mz, 6, 0, 7); g.fill(); g.stroke();
+    }
     // player arrow (always centre, pointing up)
     g.fillStyle = '#2fd3c5'; g.strokeStyle = '#000'; g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(R, R - 8); g.lineTo(R + 5.5, R + 6); g.lineTo(R, R + 3); g.lineTo(R - 5.5, R + 6); g.closePath(); g.fill(); g.stroke();

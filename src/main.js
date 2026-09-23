@@ -17,7 +17,7 @@ import { Props } from './entities/props.js';
 import { Effects } from './entities/effects.js';
 import { Hud } from './ui/hud.js';
 import { initAudio, updateListener, setVolume, sfx, makeHum, suspendAudio } from './audio/audio.js';
-import { MissionRunner, missionWelcome } from './core/missions.js';
+import { MissionRunner, allMissions } from './core/missions.js';
 import { makeSky, SUN_DIR } from './render/sky.js';
 import { Crowd } from './entities/crowd.js';
 
@@ -116,6 +116,12 @@ function boot() {
   const tmpV = new THREE.Vector3();
   game.findAimTarget = (origin, fwd, maxAngle) => {
     let best = null, bestA = maxAngle;
+    const drones = game.drones ? game.drones.targets() : [];
+    for (const q of drones) {
+      const d = tmpV.copy(q).sub(origin); const dist = d.length(); if (dist > 90) continue; d.divideScalar(dist);
+      const a = Math.acos(Math.min(1, d.dot(fwd)));
+      if (a < bestA * 1.6) { bestA = a / 1.6; best = { dir: d.clone(), dist, angle: a }; }
+    }
     for (const p of props.list) {
       if (!p.rest || p.hitOnce) continue;
       tmpV.copy(p.pos); tmpV.y += p.kind === 'cone' ? 0.3 : 0.1;
@@ -145,7 +151,7 @@ function boot() {
 
   const minimap = new Minimap(map);
   map.updateLOD(player.pos);
-  const mission = new MissionRunner(game, missionWelcome(game));
+  const mission = new MissionRunner(game, allMissions(game));
   game.mission = mission;
 
   // ---- interaction (USE) ----
@@ -221,7 +227,7 @@ function boot() {
     for (const c of game.cars) c.update(dt, player);
     map.updateLOD(player.pos, dt);
     crowd.update(dt, player);
-    minimap.update(player, game.cars, dez);
+    minimap.update(player, game.cars, dez, mission.target());
     for (const n of game.npcs) n.update(dt, player);
     props.update(dt);
     effects.update(dt);
@@ -238,7 +244,7 @@ function boot() {
     // stats for the mission
     game.stats.moved += Math.hypot(player.pos.x - movedFrom.x, player.pos.z - movedFrom.z);
     movedFrom.copy(player.pos);
-    mission.update();
+    mission.update(dt);
 
     // blinking crossing globes
     beaconT += dt;

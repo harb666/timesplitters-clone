@@ -17,22 +17,32 @@
   and predictable.
 - Resolution scale is capped (Low 1×, Medium 1.5×, High 2×).
 
-## Fir Vale reference (general layout only)
+## Fir Vale reference — how the map was built
 
-Used as loose reference, then fictionalised:
+Map services (OpenStreetMap, Overpass, tiles) are blocked from the build
+environment, so the layout was reconstructed from **published address and
+postcode coordinates** (ONS postcode centroids as shown on public postcode
+lookup sites, Open Government Licence) plus published descriptions of which
+streets meet where. Key facts used:
 
-- North Sheffield suburb on a hillside; main roads climb steeply, side
-  streets of stepped Victorian/Edwardian red-brick terraces with slate roofs
-  and chimneys, fronting straight onto the pavement or tiny yards.
-- Busy local shop parades: convenience stores, phone repair, barbers, sweet
-  centres, bargain shops, the odd empty unit.
-- Gritstone boundary walls, a small recreation ground, bus stops with
-  shelters, zebra crossings with flashing orange globes, double yellow
-  lines, wheelie bins on the pavement, back alleys ("gennels").
-- Hills and tower blocks on the skyline.
+- The Sheffield Outer Ring Road (A6102) runs Owler Lane → Rushby Street →
+  a junction with Barnsley Road (A6135) and Firth Park Road by the Northern
+  General Hospital, continuing west as Herries Road.
+- St Cuthbert's Church (1901–04, Gothic Revival, squared stone, plain tile
+  roofs, nave/aisles/transepts, NW tower added 1959) stands on Barnsley Road
+  opposite the Northern General.
+- Fir Vale School and Oasis Academy Fir Vale are on Owler Lane.
+- Page Hall Road connects with Hinde House Lane, Firth Park Road, Rushby
+  Street; Robey Street links Hinde Street and Hinde House Lane.
+- Address coordinates along Barnsley Road, Firth Park Road, Hinde House
+  Lane, Owler Lane, Page Hall Road, Popple Street, Wensley Street, Rushby
+  Street, Skinnerthorpe Road and Herries Road give the street lines
+  (see `src/maps/firvale/data.js`, which lists every reference point).
 
-The street names on signs are public geography. Every shop name and sign in
-the game is invented. No real people, homes or businesses are depicted.
+Postcode centroids are approximate (tens of metres), so junction shapes and
+minor streets are interpretations. Back streets inside the blocks are
+generated to match the dense terraced pattern of the area. Every shop name
+and sign is invented; no real homes, people or businesses are depicted.
 
 ## Originality checklist (applied to every asset)
 

@@ -42,6 +42,29 @@ node scripts/serve.mjs
 Settings: look sensitivity, aim assist, auto-fire, gyro aiming, left-handed
 layout, invert look, graphics quality and volume. They are remembered.
 
+## What's new in 0.3 — the real Fir Vale
+
+- The map is rebuilt on the **real street layout**, reconstructed from
+  public address/postcode coordinates: Barnsley Road, Herries Road, Firth
+  Park Road, Owler Lane, Page Hall Road, Rushby Street, **Hinde House Lane**,
+  Popple Street, Wensley Street, Robey Street, Hinde Street, Skinnerthorpe
+  Road, plus the terraced back streets that pack the blocks.
+- The Fir Vale junction by **St Cuthbert's Church** (Gothic Revival, NW
+  tower), the **Northern General Hospital** campus (blocks, car parks, the
+  tall chimney, boundary wall), **Fir Vale School** on Owler Lane.
+- ~3,000 generated Victorian terraces: bay windows, stone lintels and sills,
+  slate roofs with ridge tiles, chimney stacks and pots, gutters and
+  downpipes, satellite dishes, garden walls, bins, rear outriggers; some
+  rendered. ~150 shop conversions with signs (Potraviny, halal butchers,
+  sweet centre, money transfer, barbers…), awnings, fruit-and-veg stalls,
+  roller shutters.
+- Parked cars along the terraces, lamp posts, traffic lights and guard
+  railings at the junction, bus shelters, street name plates, a zebra
+  crossing on Page Hall Road, post box, cabinets, trees, direction sign.
+- Traffic drives the real routes through the junction; Dez laps the Page
+  Hall Road shops; a rotating minimap shows the real street names.
+- Cloudy Sheffield sky; chunked scenery with distance culling for phones.
+
 ## What's new in 0.2 — weapon & audio overhaul
 
 - **Two detailed weapons** replace the placeholder: the **VK-9 Kestrel**
@@ -104,7 +127,8 @@ src/weapons/            rig, animation, hands, arsenal, gun models (models/)
 src/render/             image-based lighting
 src/entities/           Falcon R AI, Dez, props, effects
 src/models/             low-poly model builders (car, characters, batching)
-src/maps/               Fir Vale district layout
+src/maps/               Fir Vale: firVale.js (builder), firvale/data.js (street
+                        data + sources), roads, buildings, landmarks, streetscape
 src/textures/           textures painted in code
 src/audio/              procedural sound engine + car engine synth
 src/ui/                 HUD code and CSS

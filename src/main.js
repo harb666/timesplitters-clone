@@ -11,18 +11,19 @@ import { weaponMaterials } from './weapons/materials.js';
 import { Casings } from './entities/casings.js';
 import { makeEnvironment } from './render/environment.js';
 import { initSoundscape, setEnvironment } from './audio/soundscape.js';
-import { Car, parkedFalcon } from './entities/car.js';
+import { Car } from './entities/car.js';
+import { Minimap } from './ui/minimap.js';
 import { Dez } from './entities/dez.js';
 import { Props } from './entities/props.js';
 import { Effects } from './entities/effects.js';
 import { Hud } from './ui/hud.js';
 import { initAudio, updateListener, setVolume, sfx, makeHum, suspendAudio } from './audio/audio.js';
 import { MissionRunner, missionWelcome } from './core/missions.js';
-import { skyTexture } from './textures/procedural.js';
+import { makeSky } from './render/sky.js';
 
 const QUALITY = {
-  low: { dpr: 1, fogNear: 30, fogFar: 120, aa: false, shadows: 0 },
-  medium: { dpr: 1.5, fogNear: 40, fogFar: 160, aa: true, shadows: 1024 },
+  low: { dpr: 1, fogNear: 35, fogFar: 140, aa: false, shadows: 0 },
+  medium: { dpr: 1.5, fogNear: 45, fogFar: 185, aa: true, shadows: 1024 },
   high: { dpr: 2, fogNear: 50, fogFar: 200, aa: true, shadows: 2048 },
 };
 
@@ -50,8 +51,9 @@ function boot() {
   renderer.info.autoReset = false; // we render two passes per frame; count both
 
   const scene = new THREE.Scene();
-  scene.background = skyTexture();
-  scene.fog = new THREE.Fog(0xd6d2c6, q.fogNear, q.fogFar);
+  scene.background = new THREE.Color(0xd3d6d2);
+  scene.fog = new THREE.Fog(0xd3d6d2, q.fogNear, q.fogFar);
+  const sky = makeSky(); scene.add(sky);
   const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 700);
 
   // Lighting: image-based sky light (reflections + ambient) and a warm sun
@@ -94,12 +96,13 @@ function boot() {
   game.arsenal = arsenal; game.weapon = arsenal;
 
   // Traffic: one Falcon R doing laps, one parked up in the car park.
-  const car = new Car(scene, world, { lane: 'south', z: -90, paint: 0x1d5fd1, plate: 'FV24 ZAP', hud });
-  parkedFalcon(scene, world, 18.5, 40, Math.PI / 2, 0xf1b700, 'S4 SNAX');
-  game.cars = [car];
+  // Traffic on the real routes through the Fir Vale junction.
+  game.cars = [];
+  const carSpecs = [[0x1d5fd1, 'FV24 ZAP', 3, 0.35], [0xe8e8e8, 'S5 7NGH', 0, 0.6], [0x2b2b2e, 'YA19 OWL', 1, 0.15], [0x9a1b1b, 'S4 8PHR', -1, 0.8]];
+  for (const [paint, plate, bias, start] of carSpecs) game.cars.push(new Car(scene, world, { net: map.net, routes: map.routes, paint, plate, speedBias: bias, hud, start, others: game.cars }));
   scene.traverse((o) => { if (o.isMesh && !o.castShadow && o.geometry && o.material && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
 
-  const dez = new Dez(scene, world, { x: map.paveX - 2.2, z0: -26, z1: 26, hud });
+  const dez = new Dez(scene, world, { path: map.dezPath, hud });
   game.dez = dez;
   game.npcs = [dez];
 
@@ -134,6 +137,8 @@ function boot() {
     }, 2600);
   };
 
+  const minimap = new Minimap(map);
+  map.updateLOD(player.pos);
   const mission = new MissionRunner(game, missionWelcome(game));
   game.mission = mission;
 
@@ -205,7 +210,10 @@ function boot() {
     if (Math.abs(camera.fov - wantFov) > 0.01) { camera.fov = wantFov; camera.updateProjectionMatrix(); }
     document.body.classList.toggle('ads', arsenal.adsK > 0.6);
     game.casings.update(dt);
-    for (const c of game.cars) c.update(dt, player);
+    for (const c of game.cars) c.update(dt, player, map.junction);
+    map.updateLOD(player.pos, dt);
+    sky.position.copy(camera.position);
+    minimap.update(player, game.cars, dez);
     for (const n of game.npcs) n.update(dt, player);
     props.update(dt);
     effects.update(dt);

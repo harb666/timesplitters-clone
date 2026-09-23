@@ -1,43 +1,84 @@
-// Terrain height + simple box collision. Kept deliberately cheap for phones:
-// everything solid is an axis-aligned box (AABB).
+// Terrain height + collision. Solid things are boxes, optionally rotated
+// about Y (buildings follow the real, angled streets). A uniform grid keeps
+// queries fast with thousands of buildings.
 
-// Fir Vale sits on a hillside: the main road climbs gently towards the north
-// (-Z in this game) and the ground drops away to the east (+X), which gives
-// the stepped terraces that are typical of north Sheffield.
+// Fir Vale's lie of the land: the ground climbs to the north-east towards
+// Wincobank hill and Firth Park, and to the south-west up Barnsley Road
+// towards Pitsmoor, with a gentle hollow along Owler Lane.
 export function groundHeight(x, z) {
-  return -z * 0.045 - x * 0.012 + Math.sin(z * 0.03) * 0.6;
+  const ne = x * 0.028 - z * 0.022;
+  const sw = Math.max(0, -x - z - 200) * 0.03;
+  const hollow = -3.5 * Math.exp(-((z - 200) * (z - 200)) / (2 * 90 * 90));
+  return ne + sw + hollow + Math.sin(x / 170) * Math.cos(z / 210) * 2.2;
 }
+
+const CELL = 24;
 
 export class World {
   constructor() {
-    this.boxes = [];      // { minX, maxX, minY, maxY, minZ, maxZ, tag, owner }
-    this.dynamic = [];    // boxes that move (cars) — rebuilt each frame by owners
+    this.boxes = [];      // static boxes
+    this.dynamic = [];    // moving boxes (cars, NPCs) — owners update them in place
+    this.grid = new Map();
   }
 
+  _key(ix, iz) { return ix * 73856093 ^ iz * 19349663; }
+  _insert(b) {
+    const x0 = Math.floor(b.minX / CELL), x1 = Math.floor(b.maxX / CELL), z0 = Math.floor(b.minZ / CELL), z1 = Math.floor(b.maxZ / CELL);
+    for (let ix = x0; ix <= x1; ix++) for (let iz = z0; iz <= z1; iz++) {
+      const k = this._key(ix, iz); let c = this.grid.get(k); if (!c) { c = []; this.grid.set(k, c); } c.push(b);
+    }
+  }
+
+  // Axis-aligned box.
   addBox(minX, maxX, minY, maxY, minZ, maxZ, tag = 'static', owner = null) {
-    const b = { minX, maxX, minY, maxY, minZ, maxZ, tag, owner };
-    this.boxes.push(b);
+    const b = { minX, maxX, minY, maxY, minZ, maxZ, tag, owner, rot: 0 };
+    this.boxes.push(b); this._insert(b);
     return b;
   }
 
-  // Box centred on (x,z) standing on the ground at that point.
+  // Box of half-size (hw, hd) centred at (cx, cz) rotated by `ry` (radians,
+  // same convention as Object3D.rotation.y).
+  addOBB(cx, cz, hw, hd, ry, minY, maxY, tag = 'static', owner = null) {
+    const c = Math.cos(ry), s = Math.sin(ry);
+    const ex = Math.abs(c) * hw + Math.abs(s) * hd, ez = Math.abs(s) * hw + Math.abs(c) * hd;
+    const b = { minX: cx - ex, maxX: cx + ex, minY, maxY, minZ: cz - ez, maxZ: cz + ez, tag, owner, rot: ry, cx, cz, hw, hd, c, s };
+    this.boxes.push(b); this._insert(b);
+    return b;
+  }
+
   addFootprint(x, z, w, d, h, tag, owner, baseOffset = 0) {
     const g = groundHeight(x, z) + baseOffset;
     return this.addBox(x - w / 2, x + w / 2, g - 2, g + h, z - d / 2, z + d / 2, tag, owner);
   }
 
-  *allBoxes() {
-    yield* this.boxes;
-    yield* this.dynamic;
+  // Candidate boxes near a point / radius.
+  near(x, z, r, out) {
+    out.length = 0;
+    const x0 = Math.floor((x - r) / CELL), x1 = Math.floor((x + r) / CELL), z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
+    for (let ix = x0; ix <= x1; ix++) for (let iz = z0; iz <= z1; iz++) { const c = this.grid.get(this._key(ix, iz)); if (c) for (const b of c) if (b._q !== this._qid) { b._q = this._qid; out.push(b); } }
+    this._qid = (this._qid || 0) + 1;
+    for (const b of this.dynamic) out.push(b);
+    return out;
   }
 
-  // Highest surface under a point that the player could stand on, given
-  // their feet are at `feetY` and they can step up `step` metres.
+  // Point -> box local frame (for rotated boxes).
+  static local(b, x, z) {
+    if (!b.rot) return [x, z, b];
+    const dx = x - b.cx, dz = z - b.cz;
+    // inverse rotation
+    return [dx * b.c - dz * b.s, dx * b.s + dz * b.c];
+  }
+
+  // Highest surface under a point that could be stood on.
   floorAt(x, z, feetY, step, radius = 0) {
     let y = groundHeight(x, z);
-    for (const b of this.allBoxes()) {
-      if (x + radius <= b.minX || x - radius >= b.maxX || z + radius <= b.minZ || z - radius >= b.maxZ) continue;
-      if (b.maxY <= feetY + step && b.maxY > y) y = b.maxY;
+    for (const b of this.near(x, z, radius + 1, this._tmp || (this._tmp = []))) {
+      if (b.maxY > feetY + step || b.maxY <= y) continue;
+      if (b.rot) {
+        const [lx, lz] = World.local(b, x, z);
+        if (Math.abs(lx) >= b.hw + radius || Math.abs(lz) >= b.hd + radius) continue;
+      } else if (x + radius <= b.minX || x - radius >= b.maxX || z + radius <= b.minZ || z - radius >= b.maxZ) continue;
+      y = b.maxY;
     }
     return y;
   }
@@ -45,43 +86,53 @@ export class World {
   // Push a vertical cylinder out of every box it overlaps (XZ plane only).
   collideCylinder(pos, radius, feetY, height, step) {
     let hit = null;
-    for (const b of this.allBoxes()) {
+    for (const b of this.near(pos.x, pos.z, radius + 1, this._tmp2 || (this._tmp2 = []))) {
       if (b.maxY <= feetY + step || b.minY >= feetY + height) continue;
-      const cx = Math.max(b.minX, Math.min(pos.x, b.maxX));
-      const cz = Math.max(b.minZ, Math.min(pos.z, b.maxZ));
-      let dx = pos.x - cx, dz = pos.z - cz;
+      let px, pz, minX, maxX, minZ, maxZ;
+      if (b.rot) { [px, pz] = World.local(b, pos.x, pos.z); minX = -b.hw; maxX = b.hw; minZ = -b.hd; maxZ = b.hd; }
+      else { px = pos.x; pz = pos.z; minX = b.minX; maxX = b.maxX; minZ = b.minZ; maxZ = b.maxZ; }
+      const cx = Math.max(minX, Math.min(px, maxX)), cz = Math.max(minZ, Math.min(pz, maxZ));
+      let dx = px - cx, dz = pz - cz;
       const d2 = dx * dx + dz * dz;
       if (d2 >= radius * radius) continue;
-      if (d2 > 1e-8) {
-        const d = Math.sqrt(d2);
-        pos.x = cx + (dx / d) * radius;
-        pos.z = cz + (dz / d) * radius;
-      } else {
-        // centre is inside the box: push out along the shallowest axis
-        const pushL = pos.x - b.minX, pushR = b.maxX - pos.x;
-        const pushB = pos.z - b.minZ, pushF = b.maxZ - pos.z;
-        const m = Math.min(pushL, pushR, pushB, pushF);
-        if (m === pushL) pos.x = b.minX - radius;
-        else if (m === pushR) pos.x = b.maxX + radius;
-        else if (m === pushB) pos.z = b.minZ - radius;
-        else pos.z = b.maxZ + radius;
+      if (d2 > 1e-8) { const d = Math.sqrt(d2); px = cx + dx / d * radius; pz = cz + dz / d * radius; }
+      else {
+        const m = Math.min(px - minX, maxX - px, pz - minZ, maxZ - pz);
+        if (m === px - minX) px = minX - radius; else if (m === maxX - px) px = maxX + radius; else if (m === pz - minZ) pz = minZ - radius; else pz = maxZ + radius;
       }
+      if (b.rot) { pos.x = b.cx + px * b.c + pz * b.s; pos.z = b.cz - px * b.s + pz * b.c; }
+      else { pos.x = px; pos.z = pz; }
       hit = b;
     }
     return hit;
   }
 
-  // Ray vs boxes: returns nearest distance or Infinity. Used for bullets.
+  // Ray vs boxes: nearest hit within maxDist.
   raycastBoxes(ox, oy, oz, dx, dy, dz, maxDist) {
     let best = maxDist, bestBox = null, bestN = null;
-    for (const b of this.allBoxes()) {
-      let tmin = 0, tmax = best, nAxis = -1, nSign = 0;
-      const axes = [[ox, dx, b.minX, b.maxX], [oy, dy, b.minY, b.maxY], [oz, dz, b.minZ, b.maxZ]];
-      let ok = true;
+    // gather candidates along the ray from the grid
+    const cand = this._rc || (this._rc = []); cand.length = 0; const qid = (this._qid = (this._qid || 0) + 1);
+    const stepLen = CELL * 0.5, steps = Math.ceil(maxDist / stepLen) + 1;
+    for (let i = 0; i <= steps; i++) {
+      const t = Math.min(maxDist, i * stepLen);
+      const x = ox + dx * t, z = oz + dz * t;
+      for (let ax = -1; ax <= 1; ax++) for (let az = -1; az <= 1; az++) {
+        const c = this.grid.get(this._key(Math.floor(x / CELL) + ax, Math.floor(z / CELL) + az));
+        if (c) for (const b of c) if (b._q !== qid) { b._q = qid; cand.push(b); }
+      }
+    }
+    for (const b of this.dynamic) cand.push(b);
+    for (const b of cand) {
+      let o = [ox, oy, oz], d = [dx, dy, dz], mn, mx;
+      if (b.rot) {
+        const [lx, lz] = World.local(b, ox, oz);
+        o = [lx, oy, lz]; d = [dx * b.c - dz * b.s, dy, dx * b.s + dz * b.c];
+        mn = [-b.hw, b.minY, -b.hd]; mx = [b.hw, b.maxY, b.hd];
+      } else { mn = [b.minX, b.minY, b.minZ]; mx = [b.maxX, b.maxY, b.maxZ]; }
+      let tmin = 0, tmax = best, nAxis = -1, nSign = 0, ok = true;
       for (let i = 0; i < 3; i++) {
-        const [o, d, mn, mx] = axes[i];
-        if (Math.abs(d) < 1e-9) { if (o < mn || o > mx) { ok = false; break; } continue; }
-        let t1 = (mn - o) / d, t2 = (mx - o) / d, s = -1;
+        if (Math.abs(d[i]) < 1e-9) { if (o[i] < mn[i] || o[i] > mx[i]) { ok = false; break; } continue; }
+        let t1 = (mn[i] - o[i]) / d[i], t2 = (mx[i] - o[i]) / d[i], s = -1;
         if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; s = 1; }
         if (t1 > tmin) { tmin = t1; nAxis = i; nSign = s; }
         if (t2 < tmax) tmax = t2;
@@ -89,13 +140,19 @@ export class World {
       }
       if (ok && tmin > 0 && tmin < best) { best = tmin; bestBox = b; bestN = [nAxis, nSign]; }
     }
-    // Ground plane (approximate: march)
+    // ground (march)
     if (dy < 0) {
       for (let t = 0.5; t < best; t += 0.5) {
         const x = ox + dx * t, y = oy + dy * t, z = oz + dz * t;
         if (y < groundHeight(x, z)) { best = t; bestBox = null; bestN = [1, 1]; break; }
       }
     }
-    return { dist: best, box: bestBox, normalAxis: bestN ? bestN[0] : -1, normalSign: bestN ? bestN[1] : 0 };
+    let normalAxis = bestN ? bestN[0] : -1, normalSign = bestN ? bestN[1] : 0, normal = null;
+    if (bestBox && bestBox.rot && normalAxis !== 1) {
+      // rotate local normal back to world
+      const nx = normalAxis === 0 ? normalSign : 0, nz = normalAxis === 2 ? normalSign : 0;
+      normal = [nx * bestBox.c + nz * bestBox.s, 0, -nx * bestBox.s + nz * bestBox.c];
+    }
+    return { dist: best, box: bestBox, normalAxis, normalSign, normal };
   }
 }

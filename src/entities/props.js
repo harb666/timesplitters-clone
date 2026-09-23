@@ -38,7 +38,7 @@ export class Props {
       const y = s.y ?? G(s.x, s.z);
       g.position.set(s.x, y, s.z);
       scene.add(g);
-      this.list.push({ kind, mesh: g, pos: g.position, vel: new THREE.Vector3(), spin: new THREE.Vector3(), radius, points, rest: true, restY: y, hitOnce: false, home: new THREE.Vector3(s.x, y, s.z), respawn: 0 });
+      this.list.push({ kind, tag: s.tag, mesh: g, pos: g.position, vel: new THREE.Vector3(), spin: new THREE.Vector3(), radius, points, rest: true, restY: y, hitOnce: false, home: new THREE.Vector3(s.x, y, s.z), respawn: 0 });
     }
     this.tmp = new THREE.Vector3();
   }

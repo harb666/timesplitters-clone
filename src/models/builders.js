@@ -70,35 +70,47 @@ export function mergeGeometries(list) {
   return out;
 }
 
+// Collects static scenery and merges it into one mesh per material per
+// map chunk (so the camera only draws nearby chunks). Pieces flagged
+// `detail` go in a separate layer that is hidden beyond DETAIL_RANGE.
+export const CHUNK = 128;
 export class StaticBatch {
   constructor() { this.groups = new Map(); }
 
   // Add any geometry (it is consumed) with a transform and tint colour.
-  add(material, geometry, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color } = {}) {
-    _e.set(rx, ry, rz); _q.setFromEuler(_e);
-    _m.compose(_p.set(x, y, z), _q, _s.set(sx, sy, sz));
-    geometry.applyMatrix4(_m);
+  add(material, geometry, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color, detail = false, chunk } = {}) {
+    if (x || y || z || rx || ry || rz || sx !== 1 || sy !== 1 || sz !== 1) {
+      _e.set(rx, ry, rz); _q.setFromEuler(_e);
+      _m.compose(_p.set(x, y, z), _q, _s.set(sx, sy, sz));
+      geometry.applyMatrix4(_m);
+    }
     ensureAttrs(geometry, color);
-    let grp = this.groups.get(material);
-    if (!grp) { grp = []; this.groups.set(material, grp); }
-    grp.push(geometry);
+    let cx, cz;
+    if (chunk) { [cx, cz] = chunk; } else {
+      const pa = geometry.attributes.position.array; let mx = 0, mz = 0; const n = pa.length / 3, st = Math.max(1, Math.floor(n / 8)); let k = 0;
+      for (let i = 0; i < n; i += st) { mx += pa[i * 3]; mz += pa[i * 3 + 2]; k++; }
+      cx = Math.floor(mx / k / CHUNK); cz = Math.floor(mz / k / CHUNK);
+    }
+    const key = material.uuid + '|' + cx + '|' + cz + '|' + (detail ? 1 : 0);
+    let grp = this.groups.get(key);
+    if (!grp) { grp = { material, list: [], detail, count: 0 }; this.groups.set(key, grp); }
+    grp.list.push(geometry); grp.count += geometry.attributes.position.count;
+    return this;
   }
 
   // Box by its centre position.
-  box(material, x, y, z, w, h, d, { color, tile = 0, ry = 0, rx = 0, rz = 0 } = {}) {
-    this.add(material, tiledBox(w, h, d, tile), { x, y, z, rx, ry, rz, color });
+  box(material, x, y, z, w, h, d, { color, tile = 0, ry = 0, rx = 0, rz = 0, detail = false } = {}) {
+    this.add(material, tiledBox(w, h, d, tile), { x, y, z, rx, ry, rz, color, detail });
   }
 
   build(parent) {
     const meshes = [];
-    for (const [mat, list] of this.groups) {
-      // Split very large groups to keep index buffers modest.
-      for (let i = 0; i < list.length; i += 4000) {
-        const mesh = new THREE.Mesh(mergeGeometries(list.slice(i, i + 4000)), mat);
-        mesh.matrixAutoUpdate = false;
-        parent.add(mesh); meshes.push(mesh);
-      }
-      list.forEach((g) => g.dispose());
+    for (const grp of this.groups.values()) {
+      const mesh = new THREE.Mesh(mergeGeometries(grp.list), grp.material);
+      mesh.matrixAutoUpdate = false;
+      mesh.userData.detail = grp.detail;
+      parent.add(mesh); meshes.push(mesh);
+      grp.list.forEach((g) => g.dispose());
     }
     this.groups.clear();
     return meshes;

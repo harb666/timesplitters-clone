@@ -1,532 +1,247 @@
-// FIR VALE — prototype district.
+// FIR VALE — the playable district, rebuilt on the real street layout.
 //
-// A fictional, game-ified take on the Barnsley Road / Page Hall Road corner
-// of Fir Vale, Sheffield: a main road climbing a hill, a parade of small
-// shops, red-brick terraces stepping down the slope, a little rec ground
-// behind a gritstone wall, double yellows, a zebra crossing and a bus stop.
-// Built only from general layout knowledge; every model and texture here is
-// original and generated in code. No real businesses or homes are depicted.
-//
-// Coordinates are metres. +X = east, -Z = north (uphill), +Y = up.
+// Streets: Barnsley Road, Herries Road, Firth Park Road, Owler Lane,
+// Page Hall Road, Rushby Street, Hinde House Lane, Popple Street, Wensley
+// Street, Robey Street, Hinde Street, Skinnerthorpe Road and back streets.
+// Landmarks: the Fir Vale junction by St Cuthbert's Church, the Northern
+// General Hospital campus, Fir Vale School on Owler Lane, the Page Hall Road
+// shops. See ./firvale/data.js for sources. Coordinates are metres, +X east,
+// -Z north.
 import * as THREE from 'three';
 import { groundHeight as G } from '../core/world.js';
-import { StaticBatch, pbr } from '../models/builders.js';
+import { StaticBatch, pbr, tiledBox, CHUNK } from '../models/builders.js';
 import * as PB from '../textures/pbr.js';
-import { boxUV } from '../models/shapes.js';
-import * as TX from '../textures/procedural.js';
+import { ROADS, SITES, PLACES, ROUTES, JUNCTION, BOUNDS } from './firvale/data.js';
+import { RoadNetwork, infillStreets } from './firvale/roads.js';
+import { Occupancy, buildTerraces, windowAtlas, signAtlas, displayAtlas, Frame, rng } from './firvale/buildings.js';
+import { buildChurch, buildHospital, buildSchool, inPoly } from './firvale/landmarks.js';
+import { buildStreetscape, plantTrees, parkCars } from './firvale/streetscape.js';
 
-export const ROAD = { halfWidth: 5, pave: 3.5, zMin: -150, zMax: 150 };
-export const LANES = { north: -2.4, south: 2.4 }; // UK: drive on the left
+export { JUNCTION };
 
-const BRICK_TINTS = ['#ffffff', '#f0d8cc', '#e6c4b4', '#d9b8a8', '#fde2d4', '#c9a898'];
-const DOOR_COLOURS = ['#7a1f1f', '#1f3f7a', '#245a2c', '#1b1b1b', '#f2f2ee', '#5a2d6b', '#b8862b'];
-
-function rng(seed) {
-  let s = seed >>> 0;
-  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+function canvasTex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
 }
 
-// What the ground is made of at (x, z) — drives footsteps, bullet impacts
-// and casing bounces.
-export function surfaceAt(x, z) {
-  const ax = Math.abs(x);
-  if (z > ROAD.zMin && z < ROAD.zMax) { if (ax < ROAD.halfWidth) return 'asphalt'; if (ax < ROAD.halfWidth + ROAD.pave) return 'paving'; }
-  if (x > 1 && x < 112 && z > -48.5 && z < -35.5) return Math.abs(z + 42) < 4 ? 'asphalt' : 'paving';     // Page Hall Rd
-  if (x < -1 && x > -112 && z > 44.2 && z < 55.8) return Math.abs(z - 50) < 3.6 ? 'asphalt' : 'paving';   // Owler Lane
-  if (x > 8.5 && x < 24 && z > 34 && z < 48) return 'asphalt';                                            // car park
-  if (x > 22.5 && x < 26 && z > -36 && z < 32) return 'asphalt';                                          // gennel
-  if (z > 4 && z < 8 && x > -30 && x < -8.7) return 'paving';                                             // rec path
-  return 'grass';
+function makeMaterials(quality) {
+  const n = quality === 'low' ? 256 : 512;
+  const std = (o) => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...o });
+  const win = windowAtlas(), signs = signAtlas(), disp = displayAtlas();
+  const stained = canvasTex(64, 128, (g, w, h) => {
+    g.fillStyle = '#111'; g.fillRect(0, 0, w, h);
+    for (let y = 2; y < h; y += 10) for (let x = 2; x < w; x += 10) { g.fillStyle = `hsl(${[210, 45, 0, 130, 280][(x * 7 + y * 3) % 5]},60%,${30 + (x + y) % 25}%)`; g.fillRect(x, y, 8, 8); }
+    g.strokeStyle = '#111'; g.lineWidth = 3; g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
+  });
+  const roadSign = canvasTex(512, 288, (g, w, h) => {
+    g.fillStyle = '#1d4fa3'; g.fillRect(0, 0, w, h); g.strokeStyle = '#fff'; g.lineWidth = 8; g.strokeRect(8, 8, w - 16, h - 16);
+    g.fillStyle = '#fff'; g.font = 'bold 34px Arial'; g.textAlign = 'left';
+    g.fillText('↑  Barnsley  (A6135)', 36, 70); g.fillText('←  Herries Road  (A6102)', 36, 130); g.fillText('↗  Firth Park  (B6086)', 36, 190);
+    g.fillStyle = '#fff'; g.fillRect(36, 220, 250, 44); g.fillStyle = '#1d4fa3'; g.font = 'bold 26px Arial'; g.fillText('H  Northern General', 44, 252);
+  });
+  const busFlag = canvasTex(128, 96, (g, w, h) => { g.fillStyle = '#f6f6f2'; g.fillRect(0, 0, w, h); g.fillStyle = '#1b5e20'; g.beginPath(); g.arc(64, 44, 32, 0, 7); g.fill(); g.fillStyle = '#fff'; g.font = 'bold 26px Arial'; g.textAlign = 'center'; g.fillText('BUS', 64, 54); g.fillStyle = '#222'; g.font = 'bold 13px Arial'; g.fillText('STOP', 64, 90); });
+  const set = (s, o = {}) => std({ map: s.map, roughnessMap: s.roughnessMap, normalMap: s.normalMap, roughness: 1, ...o });
+  const M = {
+    road: set(PB.asphaltPBR(n), { normalScale: new THREE.Vector2(0.8, 0.8) }),
+    roadFlat: set(PB.asphaltPBR(256)),
+    pave: set(PB.pavingPBR(256)),
+    kerb: set(PB.stonePBR(256)),
+    line: std({ roughness: 0.6 }),
+    grass: set(PB.grassPBR(256), { envMapIntensity: 0.4 }),
+    brick: set(PB.brickPBR(n), { normalScale: new THREE.Vector2(1.2, 1.2) }),
+    render: set(PB.polymerSet(256, { base: [200, 198, 190], seed: 91, stipple: 1.2 })),
+    stone: set(PB.stonePBR(256)),
+    ashlar: set(PB.stonePBR(256)),
+    slate: set(PB.slatePBR(256)),
+    tile: set(PB.slatePBR(256)),
+    ridge: std({ roughness: 0.7 }), clay: std({ roughness: 0.7 }),
+    darkMetal: std({ roughness: 0.45, metalness: 0.6 }), metal: std({ roughness: 0.35, metalness: 0.8 }), galv: std({ roughness: 0.4, metalness: 0.9 }),
+    door: std({ roughness: 0.35 }), plastic: std({ roughness: 0.55 }), hedge: std({ roughness: 0.95 }), dish: std({ roughness: 0.4, metalness: 0.3 }),
+    win: std({ map: win, roughness: 0.08, metalness: 0.1, envMapIntensity: 1.3 }),
+    glass: std({ color: 0x3a4a55, roughness: 0.05, metalness: 0.2, envMapIntensity: 1.5 }),
+    display: std({ map: disp, roughness: 0.06, envMapIntensity: 1.3 }),
+    sign: std({ map: signs.tex, roughness: 0.4 }),
+    fabric: std({ roughness: 0.9 }), wood: set(PB.woodSet(256, { base: [120, 90, 60], seed: 3 }), { metalnessMap: null }), fruit: std({ roughness: 0.6 }),
+    stainedGlass: std({ map: stained, roughness: 0.1, emissive: 0x111111 }), louvre: std({ roughness: 0.8 }),
+    cladding: set(PB.polymerSet(256, { base: [220, 220, 215], seed: 51, stipple: 0.3 }), { roughness: 0.6 }),
+    officeGlass: std({ color: 0x7890a0, roughness: 0.05, metalness: 0.4, envMapIntensity: 1.4 }),
+    panel: std({ roughness: 0.4 }), fence: std({ roughness: 0.6, metalness: 0.4, transparent: true, opacity: 0.55 }),
+    lampHead: std({ color: 0x9ea4a8, emissive: 0x222018, roughness: 0.3 }), signalLens: std({ roughness: 0.2, emissive: 0x220000 }),
+    roadSign: std({ map: roadSign, roughness: 0.4 }), shelterGlass: std({ color: 0xa8c4d4, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.35 }),
+    busFlag: std({ map: busFlag, roughness: 0.5 }), names: std({ roughness: 0.5 }), postbox: std({ roughness: 0.35 }), cabinet: std({ roughness: 0.55 }),
+    bark: set(PB.woodSet(128, { base: [90, 75, 60], seed: 8 }), { metalnessMap: null }), leaves: std({ roughness: 0.9, flatShading: false }),
+    carPaint: std({ roughness: 0.28, metalness: 0.5, envMapIntensity: 1.2 }), carGlass: std({ color: 0x1b242c, roughness: 0.05, metalness: 0.3, envMapIntensity: 1.5 }),
+    tyre: std({ roughness: 0.9 }), lampLens: std({ roughness: 0.2, emissive: 0x111111 }), plate: std({ roughness: 0.5 }),
+  };
+  M.wood.metalness = 0; M.bark.metalness = 0;
+  // Share materials wherever only the tint differs: fewer materials = fewer
+  // draw calls per chunk, which matters most on phones.
+  const matte = std({ roughness: 0.75 }), metal = std({ roughness: 0.4, metalness: 0.75 }), gloss = std({ roughness: 0.18, metalness: 0.35, envMapIntensity: 1.3 });
+  for (const k of ['ridge', 'clay', 'door', 'plastic', 'hedge', 'fabric', 'fruit', 'panel', 'louvre', 'postbox', 'cabinet', 'leaves', 'tyre', 'plate', 'line']) M[k] = matte;
+  for (const k of ['darkMetal', 'metal', 'galv', 'dish']) M[k] = metal;
+  for (const k of ['glass', 'officeGlass', 'carGlass', 'lampLens', 'signalLens', 'lampHead', 'carPaint']) M[k] = gloss;
+  M.kerb = M.stone; M.ashlar = M.stone; M.tile = M.slate; M.bark = M.wood; M.roadFlat = M.road;
+  return { M, signs };
+}
+
+function signTexture(lines, bg, fg, w = 512, h = 256) {
+  return canvasTex(w, h, (g) => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h); g.fillStyle = fg; g.textAlign = 'center';
+    lines.forEach(([t, size, y]) => { g.font = `bold ${size}px Arial`; g.fillText(t, w / 2, y, w - 30); });
+  });
 }
 
 export function buildFirVale(scene, world, quality = 'medium') {
-  const R = rng(1234);
+  const t0 = performance.now();
+  const { M, signs } = makeMaterials(quality);
   const batch = new StaticBatch();
+  const hospitalPoly0 = SITES.hospital.poly, schoolPoly0 = SITES.school.poly;
+  const blocked0 = (x, z) => inPoly(hospitalPoly0, x, z) || inPoly(schoolPoly0, x, z) || Math.hypot(x - SITES.church.at[0], z - SITES.church.at[1]) < 40;
+  const net = new RoadNetwork([...ROADS, ...infillStreets(blocked0, BOUNDS)]);
+  const occ = new Occupancy({ minX: BOUNDS.minX - 150, maxX: BOUNDS.maxX + 150, minZ: BOUNDS.minZ - 150, maxZ: BOUNDS.maxZ + 150 });
+  const interactables = [], props = [];
 
-  // ---------- materials (shared, few of them) ----------
-  const tex = { win: [TX.houseWindowTexture(4), TX.houseWindowTexture(9), TX.houseWindowTexture(21)] };
+  const hospitalPoly = SITES.hospital.poly, schoolPoly = SITES.school.poly;
+  const nearChurch = (x, z) => Math.hypot(x - SITES.church.at[0], z - SITES.church.at[1]) < 30;
+  const isBlocked = (x, z, sitesOnly = false) => inPoly(hospitalPoly, x, z) || inPoly(schoolPoly, x, z) || nearChurch(x, z) || (!sitesOnly && false);
 
-  const hq = quality !== 'low';
-  const n = hq ? 512 : 256;
-  const M = {
-    color: pbr(null, { roughness: 0.8 }),
-    brick: pbr(PB.brickPBR(n), { normal: 1.2 }),
-    stone: pbr(PB.stonePBR(256), { normal: 1.2 }),
-    pave: pbr(PB.pavingPBR(256), { normal: 1.0 }),
-    road: pbr(PB.asphaltPBR(n), { normal: 0.8 }),
-    grass: pbr(PB.grassPBR(256), { normal: 0.8, env: 0.4 }),
-    roof: pbr(PB.slatePBR(256), { normal: 1.0 }),
-    // window glass: glossy so it reflects the sky and street
-    win: tex.win.map((t) => { const m = new THREE.MeshStandardMaterial({ map: t, roughness: 0.08, metalness: 0.1, envMapIntensity: 1.4, vertexColors: true }); return m; }),
-    leaves: pbr(null, { flatShading: true, roughness: 0.9 }),
-    metal: pbr(PB.gunSteel(256, { tint: [120, 124, 128], wear: 0.2, seed: 40 }), { metalness: 0.9, normal: 0.3 }),
-  };
-
-
-  const interactables = [];
-  const props = [];      // spots for shootable props { type, x, y, z }
-  const beacons = [];    // blinking zebra-crossing globes
-
-  // ---------- helpers ----------
-  // Ground-hugging strip (roads, pavements, lines). Follows the hill.
-  function strip(mat, x0, x1, z0, z1, lift, tile, color, seg = 4) {
-    const nx = Math.max(1, Math.ceil((x1 - x0) / seg));
-    const nz = Math.max(1, Math.ceil((z1 - z0) / seg));
-    const pos = [], uv = [], nor = [], idx = [];
-    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
-      const x = x0 + (x1 - x0) * i / nx, z = z0 + (z1 - z0) * j / nz;
-      pos.push(x, G(x, z) + lift, z); nor.push(0, 1, 0);
-      uv.push(tile ? x / tile : 0, tile ? -z / tile : 0);
-    }
-    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-      const a = j * (nx + 1) + i, b = a + nx + 1, c = a + 1, d = b + 1;
-      idx.push(a, b, c, c, b, d);
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    g.setIndex(idx);
-    batch.add(mat, g, { color });
+  // ---- terrain (chunked grid following the hills) ----
+  const X0 = BOUNDS.minX - 140, X1 = BOUNDS.maxX + 140, Z0 = BOUNDS.minZ - 140, Z1 = BOUNDS.maxZ + 140, ST = 8;
+  for (let cx = X0; cx < X1; cx += CHUNK) for (let cz = Z0; cz < Z1; cz += CHUNK) {
+    const pos = [], uv = [], idx = []; const n = CHUNK / ST;
+    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) { const x = cx + i * ST, z = cz + j * ST; pos.push(x, G(x, z) - 0.05, z); uv.push(x / 4, -z / 4); }
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a = j * (n + 1) + i, b = a + n + 1; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
+    batch.add(M.grass, g, { color: '#9aa87e' });
   }
 
-  // Kerb stones along a line in Z (for the main road).
-  function kerbZ(x, z0, z1) {
-    for (let z = z0; z < z1; z += 2) {
-      const zc = z + 1;
-      batch.box(M.stone, x, G(x, zc) + 0.02, zc, 0.25, 0.35, 2.0, { color: '#bdb8ad', tile: 1 });
-    }
+  // ---- roads: mark them in the occupancy grid, then build ----
+  for (const r of net.roads) for (const smp of r.samples) {
+    const w = r.half + r.pave + 0.3;
+    for (let o = -w; o <= w; o += 0.8) { const x = smp.x + smp.tz * o, z = smp.z - smp.tx * o; for (let d = -1.6; d <= 1.6; d += 0.8) occ.set(x + smp.tx * d, z + smp.tz * d); }
   }
-  function kerbX(z, x0, x1) {
-    for (let x = x0; x < x1; x += 2) {
-      const xc = x + 1;
-      batch.box(M.stone, xc, G(xc, z) + 0.02, z, 2.0, 0.35, 0.25, { color: '#bdb8ad', tile: 1 });
-    }
+  net.build(batch, M);
+
+  // ---- landmarks ----
+  const churchBoard = signTexture([["ST CUTHBERT'S", 44, 70], ['CHURCH · FIR VALE', 30, 118], ['Community meal & food bank', 24, 170], ['All welcome', 24, 210]], '#1f3b73', '#fff');
+  const church = buildChurch(batch, M, world, SITES.church, churchBoard, scene);
+  interactables.push({ ...church.interact, prompt: "Read St Cuthbert's notice board", lines: ["<b>Notice board:</b> \"St Cuthbert's, Fir Vale. Community meal every week. All welcome.\"", '<b>Notice board:</b> "Lost: one Scrap Blaster. If found, please do not return it."'] });
+  const nghSign = signTexture([['NORTHERN GENERAL HOSPITAL', 30, 70], ['Main Entrance  →', 34, 130], ['Emergency Department  →', 30, 190]], '#f4f4f0', '#0a4a8a', 512, 220);
+  const hosp = buildHospital(batch, M, world, hospitalPoly, net, scene, nghSign);
+  buildSchool(batch, M, world, schoolPoly, net);
+  // mark landmark areas as occupied
+  for (let x = BOUNDS.minX - 150; x < BOUNDS.maxX + 150; x += 1) for (let z = BOUNDS.minZ - 150; z < BOUNDS.maxZ + 150; z += 1) if (isBlocked(x, z)) occ.set(x, z);
+
+  // ---- terraces & shops on every street ----
+  const shopSpots = buildTerraces(batch, M, net, occ, world, isBlocked, null, signs);
+
+  // ---- street furniture, trees, parked cars ----
+  const scape = buildStreetscape(batch, M, world, net, JUNCTION, occ, isBlocked, PLACES);
+  plantTrees(batch, M, world, [...hosp.trees, ...scape.trees, [-30, 200, 1.1], [0, 215, 0.9], [-80, 210, 1.2]]);
+  const parked = parkCars(batch, M, world, net, JUNCTION, isBlocked);
+
+  // ---- zebra crossing on Page Hall Road with flashing globes ----
+  const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffa020 });
+  const phr = net.byName('Page Hall Road');
+  const zs = phr.length * 0.55;
+  for (let o = -phr.half + 0.5; o < phr.half - 0.3; o += 1.0) {
+    const p = net.pointAt(phr, zs, o + 0.25, {});
+    batch.box(M.line, p.x, G(p.x, p.z) + 0.05, p.z, 0.5, 0.02, 3.2, { color: '#f4f4ee', ry: Math.atan2(p.tx, p.tz) + Math.PI / 2 });
   }
-
-  // Local-to-world for objects rotated by 0/90/180/270 degrees.
-  const toWorld = (cx, cz, ry, lx, lz) => [cx + lx * Math.cos(ry) + lz * Math.sin(ry), cz - lx * Math.sin(ry) + lz * Math.cos(ry)];
-
-  function roofPrism(cx, y, cz, width, depth, height, ry, color = '#8a8f98') {
-    const g = new THREE.CylinderGeometry(1, 1, 1, 3, 1).toNonIndexed();
-    g.rotateX(-Math.PI / 2); // triangle tip up, length along Z
-    g.rotateY(Math.PI / 2);  // length along X (parallel to street front)
-    const sy = height / 1.5;
-    g.scale(width, sy, depth / 1.732); g.rotateY(ry); g.translate(cx, y + 0.5 * sy, cz);
-    batch.add(M.roof, boxUV(g, 0.9), { color }); // world-scale UVs so slates are the right size
-  }
-
-  // ---------- terraced house ----------
-  function house(cx, cz, ry, opts = {}) {
-    const w = opts.w ?? 5.2, d = 8, H = 5.8;
-    const g = G(cx, cz) - 0.15;
-    const tint = BRICK_TINTS[(R() * BRICK_TINTS.length) | 0];
-    const mirror = opts.mirror ? -1 : 1;
-    const P = (lx, lz) => toWorld(cx, cz, ry, lx, lz);
-    // body (extends 2m below ground so hills never show gaps)
-    batch.box(M.brick, cx, g + (H - 2) / 2, cz, w, H + 2, d, { tile: 1.3, color: tint, ry });
-    // stone band + sills
-    let [x, z] = P(0, d / 2 + 0.02);
-    batch.box(M.color, x, g + 2.9, z, w, 0.18, 0.12, { color: '#d8d0bf', ry });
-    // door + step
-    [x, z] = P(-1.5 * mirror, d / 2 + 0.04);
-    const door = DOOR_COLOURS[(R() * DOOR_COLOURS.length) | 0];
-    batch.box(M.color, x, g + 1.1, z, 1.0, 2.1, 0.1, { color: door, ry });
-    [x, z] = P(-1.5 * mirror, d / 2 + 0.25);
-    batch.box(M.stone, x, g + 0.08, z, 1.3, 0.25, 0.5, { color: '#cfc8b8', ry, tile: 1 });
-    // windows
-    const wm = M.win[(R() * 3) | 0];
-    const addWin = (lx, y, ww, wh, lz = d / 2 + 0.05) => {
-      const [wx, wz] = P(lx, lz);
-      batch.box(wm, wx, y, wz, ww, wh, 0.08, { ry });
-      const [sx, sz] = P(lx, lz + 0.06);
-      batch.box(M.color, sx, y - wh / 2 - 0.06, sz, ww + 0.2, 0.12, 0.2, { color: '#d8d0bf', ry });
-    };
-    addWin(1.0 * mirror, g + 1.55, 1.5, 1.5);
-    addWin(-1.3 * mirror, g + 4.25, 1.0, 1.3);
-    addWin(1.3 * mirror, g + 4.25, 1.0, 1.3);
-    // back windows
-    addWin(0.8, g + 1.55, 1.0, 1.2, -d / 2 - 0.05);
-    addWin(-0.8, g + 4.25, 1.0, 1.2, -d / 2 - 0.05);
-    // slate roof
-    roofPrism(cx, g + H, cz, w + 0.02, d + 0.5, 2.3, ry);
-    // chimney on party wall
-    if (opts.chimney) {
-      [x, z] = P(w / 2, 0);
-      batch.box(M.brick, x, g + H + 2.3, z, 0.8, 1.4, 1.3, { tile: 2, color: tint, ry });
-      batch.box(M.color, x - 0.15, g + H + 3.15, z, 0.2, 0.35, 0.2, { color: '#b5563a' });
-      batch.box(M.color, x + 0.2, g + H + 3.15, z, 0.2, 0.35, 0.2, { color: '#b5563a' });
-    }
-    // wheelie bin out front on some houses
-    if (opts.bins && R() < 0.55) {
-      [x, z] = P(1.8 * mirror, d / 2 + 0.6);
-      wheelieBin(x, z, ry);
-    }
-    const sw = Math.abs(Math.sin(ry)) > 0.5;
-    world.addFootprint(cx, cz, sw ? d : w, sw ? w : d, H + 2.3, 'building');
+  const beaconGeo = new THREE.SphereGeometry(0.2, 12, 8);
+  for (const sd of [1, -1]) for (const ds of [-2.2, 2.2]) {
+    const p = net.pointAt(phr, zs + ds, sd * (phr.half + 0.45), {}), g = G(p.x, p.z);
+    for (let i = 0; i < 6; i++) batch.box(M.plastic, p.x, g + 0.25 + i * 0.45, p.z, 0.1, 0.45, 0.1, { color: i % 2 ? '#111' : '#f4f4f4' });
+    const m = new THREE.Mesh(beaconGeo, beaconMat); m.position.set(p.x, g + 2.9, p.z); scene.add(m);
+    world.addBox(p.x - 0.08, p.x + 0.08, g - 1, g + 2.9, p.z - 0.08, p.z + 0.08, 'pole');
   }
 
-  function wheelieBin(x, z, ry, colour) {
-    const col = colour ?? ['#2a2a2a', '#2d4f8c', '#6b4a2b', '#2f6b36'][(R() * 4) | 0];
-    const g = G(x, z);
-    batch.box(M.color, x, g + 0.55, z, 0.6, 1.0, 0.7, { color: col, ry });
-    batch.box(M.color, x, g + 1.08, z, 0.66, 0.08, 0.78, { color: col, ry });
-    world.addBox(x - 0.33, x + 0.33, g - 1, g + 1.1, z - 0.36, z + 0.36, 'bin');
-  }
-
-  // Row of terraces along the main road (fronts facing the road).
-  function terraceAlongZ(xFront, z0, z1, side) {
-    // side = +1 east of road (faces west), -1 west of road (faces east)
-    const ry = side > 0 ? -Math.PI / 2 : Math.PI / 2;
-    const cx = xFront + side * 4; // house depth 8
-    let i = 0;
-    for (let z = z0 + 2.6; z < z1 - 2.6; z += 5.2) {
-      // leave a gennel (alley) gap every 8 houses
-      if (i % 8 === 7) { i++; continue; }
-      house(cx, z, ry, { mirror: i % 2 === 1, chimney: i % 2 === 0, bins: true });
-      i++;
-    }
-  }
-  // Row along a side street (fronts facing +z or -z).
-  function terraceAlongX(zFront, x0, x1, facing) {
-    const ry = facing > 0 ? 0 : Math.PI;
-    const cz = zFront - facing * 4;
-    let i = 0;
-    for (let x = x0 + 2.6; x < x1 - 2.6; x += 5.2) {
-      if (i % 9 === 8) { i++; continue; }
-      house(x, cz, ry, { mirror: i % 2 === 1, chimney: i % 2 === 0, bins: true });
-      i++;
-    }
-  }
-
-  // ---------- shop unit ----------
-  const signMeshes = [];
-  function signMesh(texture, x, y, z, w, h, ry, rough = 0.45) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: texture, roughness: rough, metalness: 0 }));
-    m.position.set(x, y, z); m.rotation.y = ry;
-    m.matrixAutoUpdate = false; m.updateMatrix();
-    scene.add(m); signMeshes.push(m);
-    return m;
-  }
-
-  function shop(cx, cz, ry, info) {
-    const w = 10, d = 12, H = 7.2;
-    const g = G(cx, cz) - 0.1;
-    const P = (lx, lz) => toWorld(cx, cz, ry, lx, lz);
-    batch.box(M.brick, cx, g + (H - 2) / 2, cz, w, H + 2, d, { tile: 1.3, color: info.brick ?? '#f3dccf', ry });
-    // parapet cap
-    batch.box(M.color, cx, g + H + 0.1, cz, w + 0.2, 0.25, d + 0.2, { color: '#8b8579', ry });
-    // pilasters
-    for (const lx of [-w / 2 + 0.2, w / 2 - 0.2]) {
-      const [x, z] = P(lx, d / 2 + 0.1);
-      batch.box(M.color, x, g + 1.9, z, 0.4, 3.8, 0.25, { color: '#3a3a3a', ry });
-    }
-    // shopfront frame
-    let [x, z] = P(0, d / 2 + 0.05);
-    batch.box(M.color, x, g + 0.3, z, w - 0.6, 0.6, 0.12, { color: '#2b2b2b', ry });
-    // window (glass with stock behind)
-    [x, z] = P(1.2, d / 2 + 0.06);
-    signMesh(TX.shopWindowTexture(info.seed ?? 2), x, g + 1.9, z, 6.4, 2.4, ry, 0.06);
-    // door
-    [x, z] = P(-3.4, d / 2 + 0.06);
-    batch.box(M.color, x, g + 1.35, z, 1.4, 2.5, 0.08, { color: info.door ?? '#1c2a33', ry });
-    batch.box(M.color, x + Math.sin(ry) * 0.05, g + 1.35, z + Math.cos(ry) * 0.05, 0.05, 0.5, 0.05, { color: '#cfcfcf', ry });
-    // fascia + sign
-    [x, z] = P(0, d / 2 + 0.2);
-    batch.box(M.color, x, g + 3.55, z, w - 0.2, 1.1, 0.3, { color: '#222', ry });
-    [x, z] = P(0, d / 2 + 0.36);
-    signMesh(TX.signTexture(info.sign), x, g + 3.55, z, w - 0.5, 0.95, ry);
-    // shutter box
-    [x, z] = P(0, d / 2 + 0.15);
-    batch.box(M.color, x, g + 3.0, z, w - 0.8, 0.25, 0.3, { color: '#9a9a96', ry });
-    // upstairs windows
-    for (const lx of [-3, 0, 3]) {
-      [x, z] = P(lx, d / 2 + 0.05);
-      batch.box(M.win[(R() * 3) | 0], x, g + 5.3, z, 1.2, 1.5, 0.08, { ry });
-    }
-    // awning
-    if (info.awning) {
-      const stripes = 8;
-      for (let i = 0; i < stripes; i++) {
-        const lx = -w / 2 + 0.6 + (i + 0.5) * ((w - 1.2) / stripes);
-        [x, z] = P(lx, d / 2 + 0.95);
-        batch.box(M.color, x, g + 2.85, z, (w - 1.2) / stripes, 0.06, 1.7, { color: i % 2 ? '#f4f1e8' : info.awning, ry, rx: 0 });
-      }
-      // awning is tilted: fake it with a front valance
-      [x, z] = P(0, d / 2 + 1.8);
-      batch.box(M.color, x, g + 2.7, z, w - 1.2, 0.3, 0.05, { color: info.awning, ry });
-    }
-    // posters in the window
-    (info.posters || []).forEach((p, i) => {
-      [x, z] = P(-0.6 + i * 1.2, d / 2 + 0.09);
-      signMesh(TX.posterTexture(p[0], p[1], p[2]), x, g + 1.6, z, 0.7, 1.05, ry);
-    });
-    const sw = Math.abs(Math.sin(ry)) > 0.5;
-    const fb = world.addFootprint(cx, cz, sw ? d : w, sw ? w : d, H, 'building');
-    fb.shop = true; // its road-facing wall has shop windows (glass impacts)
-    return { x: P(0, d / 2 + 2)[0], z: P(0, d / 2 + 2)[1] };
-  }
-
-  // ---------- ground ----------
-  strip(M.grass, -200, 200, -200, 200, -0.05, 4, '#8fae7a', 10);
-
-  // Main road: Barnsley Road (fictionalised)
-  strip(M.road, -ROAD.halfWidth, ROAD.halfWidth, ROAD.zMin, ROAD.zMax, 0.0, 4, '#ffffff');
-  const pw = ROAD.halfWidth + ROAD.pave;
-  strip(M.pave, ROAD.halfWidth, pw, ROAD.zMin, ROAD.zMax, 0.14, 1.8, '#ffffff');
-  strip(M.pave, -pw, -ROAD.halfWidth, ROAD.zMin, ROAD.zMax, 0.14, 1.8, '#ffffff');
-  kerbZ(ROAD.halfWidth, ROAD.zMin, ROAD.zMax);
-  kerbZ(-ROAD.halfWidth, ROAD.zMin, ROAD.zMax);
-  // centre dashes
-  for (let z = ROAD.zMin; z < ROAD.zMax; z += 6) {
-    if (z > 8 && z < 24) continue; // no dashes on the zebra crossing
-    strip(M.color, -0.08, 0.08, z, z + 3, 0.03, 0, '#f2f2ea', 3);
-  }
-  // double yellow lines on both kerbs
-  for (const sx of [-1, 1]) {
-    const xi = sx * (ROAD.halfWidth - 0.3);
-    strip(M.color, xi - 0.06, xi + 0.06, ROAD.zMin, ROAD.zMax, 0.03, 0, '#e8c21c', 6);
-    const xo = sx * (ROAD.halfWidth - 0.5);
-    strip(M.color, xo - 0.06, xo + 0.06, ROAD.zMin, ROAD.zMax, 0.03, 0, '#e8c21c', 6);
-  }
-
-  // Side street east: "Page Hall Road" (fictionalised)
-  const PH = { z: -42, half: 4, pave: 2.5, x0: pw, x1: 112 };
-  strip(M.road, PH.x0 - 3.5, PH.x1, PH.z - PH.half, PH.z + PH.half, 0.01, 4, '#ffffff');
-  strip(M.pave, PH.x0, PH.x1, PH.z - PH.half - PH.pave, PH.z - PH.half, 0.14, 1.8, '#ffffff');
-  strip(M.pave, PH.x0, PH.x1, PH.z + PH.half, PH.z + PH.half + PH.pave, 0.14, 1.8, '#ffffff');
-  kerbX(PH.z - PH.half, PH.x0, PH.x1); kerbX(PH.z + PH.half, PH.x0, PH.x1);
-  for (let x = PH.x0 + 4; x < PH.x1; x += 6) strip(M.color, x, x + 3, PH.z - 0.08, PH.z + 0.08, 0.03, 0, '#f2f2ea', 3);
-
-  // Side street west: "Owler Lane" (fictionalised)
-  const OL = { z: 50, half: 3.6, pave: 2.2, x0: -112, x1: -pw };
-  strip(M.road, OL.x0, OL.x1 + 3.5, OL.z - OL.half, OL.z + OL.half, 0.01, 4, '#ffffff');
-  strip(M.pave, OL.x0, OL.x1, OL.z - OL.half - OL.pave, OL.z - OL.half, 0.14, 1.8, '#ffffff');
-  strip(M.pave, OL.x0, OL.x1, OL.z + OL.half, OL.z + OL.half + OL.pave, 0.14, 1.8, '#ffffff');
-  kerbX(OL.z - OL.half, OL.x0, OL.x1); kerbX(OL.z + OL.half, OL.x0, OL.x1);
-
-  // Back alley behind the shops (a Sheffield "gennel")
-  strip(M.road, 22.5, 26, -36, 32, 0.01, 4, '#b8b8b8');
-
-  // Zebra crossing by the shops, with flashing orange globes on poles
-  for (let x = -ROAD.halfWidth + 0.4; x < ROAD.halfWidth - 0.4; x += 1.0) {
-    strip(M.color, x, x + 0.5, 12, 18, 0.03, 0, '#f4f4ee', 3);
-  }
-  for (const sx of [-1, 1]) for (const zz of [11.2, 18.8]) {
-    const bx = sx * (ROAD.halfWidth + 0.5), g = G(bx, zz);
-    for (let i = 0; i < 6; i++) batch.box(M.color, bx, g + 0.25 + i * 0.45, zz, 0.12, 0.45, 0.12, { color: i % 2 ? '#111' : '#f4f4f4' });
-    beacons.push(new THREE.Vector3(bx, g + 2.95, zz));
-  }
-  // zig-zags
-  for (const sx of [-1, 1]) for (let z = 0; z < 11; z += 1) {
-    const x = sx * (ROAD.halfWidth - 0.4);
-    strip(M.color, x - 0.06, x + 0.06, z + 1.2, z + 1.7, 0.035, 0, '#f4f4ee', 1);
-    strip(M.color, x - 0.06, x + 0.06, z + 18.3, z + 18.8, 0.035, 0, '#f4f4ee', 1);
-  }
-
-  // ---------- the shop parade (east side, facing the road) ----------
-  const parade = [
-    { sign: { text: 'PHONE DOCTOR 24/7', sub: 'SCREENS · UNLOCKS · EMOTIONAL SUPPORT', bg: '#0d3b66', accent: '#7fd1ff' }, seed: 5, brick: '#f0d0c0' },
-    { sign: { text: 'VALE CUTZ', sub: 'BARBERS · NO APPOINTMENT · NO REFUNDS', bg: '#121212', accent: '#ff3b3b' }, seed: 8, brick: '#e8cbbb' },
-    { sign: { text: 'FIR VALE MINI MART', sub: 'OPEN LATE · FRESH SAMOSAS · PHONE TOP-UP', bg: '#15603a', accent: '#ffcc00' }, seed: 2, awning: '#1f8a4c', start: true,
-      posters: [['SAMOSAS', '3 for £1. Ask for Kev. Kev is not here.', '#ff7b00'], ['LOST CAT', 'Answers to "OI". Do not feed. He lies.', '#3d7fff'], ['NEW!', 'Crisps flavoured like other crisps', '#ff3d7f']] },
-    { sign: { text: 'GOLDEN SPOON', sub: 'SWEET CENTRE · CAKES · PARTY TRAYS', bg: '#7a1b1b', accent: '#ffd36b' }, seed: 13, awning: '#b8862b', brick: '#f5dccd' },
-    { sign: { text: 'BARGAIN PALACE', sub: 'EVERYTHING £1* (*MOST THINGS MORE)', bg: '#4b1c78', accent: '#ffe14d' }, seed: 17 },
-    { sign: { text: 'TO LET', sub: 'ENQUIRE WITHIN (NOBODY IS WITHIN)', bg: '#e9e6dd', fg: '#222', accent: '#c0392b' }, seed: 30, door: '#555' },
-  ];
-  const shopX = pw + 6; // shop depth 12
-  let startShop = null;
-  parade.forEach((info, i) => {
-    const z = -27 + i * 10 + 5 - 5; // units from z=-27 .. 33
-    const front = shop(shopX, z - 2, -Math.PI / 2, info);
-    if (info.start) startShop = { x: front.x, z: front.z, zc: z - 2 };
-  });
-
-  // Car park south of the parade
-  strip(M.road, pw, 24, 34, 48, 0.02, 4, '#c8c8c8');
-  for (let z = 35; z < 48; z += 2.6) strip(M.color, 14, 14.12, z, z + 2.4, 0.04, 0, '#f2f2ea', 3);
-  props.push({ type: 'cone', x: 12, z: 36.5 }, { type: 'cone', x: 12.8, z: 38 });
-
-  // ---------- terraces ----------
-  terraceAlongZ(pw, ROAD.zMin, PH.z - PH.half - PH.pave - 0.5, +1);    // east, north of Page Hall Rd
-  terraceAlongZ(pw, 50, ROAD.zMax, +1);                                  // east, south of car park
-  terraceAlongZ(-pw, ROAD.zMin, -34, -1);                                // west, north of the rec
-  terraceAlongZ(-pw, OL.z + OL.half + OL.pave + 0.5, ROAD.zMax, -1);     // west, south of Owler Ln
-  // Page Hall Rd both sides
-  terraceAlongX(PH.z - PH.half - PH.pave, pw + 8.5, PH.x1, +1);          // north side faces south
-  terraceAlongX(PH.z + PH.half + PH.pave, 28, PH.x1, -1);                // south side faces north
-  // Owler Lane both sides
-  terraceAlongX(OL.z - OL.half - OL.pave, OL.x0, -44, +1);
-  terraceAlongX(OL.z + OL.half + OL.pave, OL.x0, -pw - 8.5, -1);
-
-  // ---------- Vale Rec (little park across the road) ----------
-  const REC = { x0: -44, x1: -pw - 0.2, z0: -32, z1: 42 };
-  // gritstone wall with a gap for the gate
-  for (let z = REC.z0; z < REC.z1; z += 2) {
-    if (z >= 4 && z < 8) continue; // gate
-    const x = REC.x1 + 0.3, zc = z + 1, g = G(x, zc);
-    batch.box(M.stone, x, g + 0.45, zc, 0.5, 1.1, 2.02, { tile: 1.5, color: '#e8e2d2' });
-    batch.box(M.stone, x, g + 1.05, zc, 0.62, 0.14, 2.02, { tile: 1.5, color: '#bdb6a4' });
-    world.addBox(x - 0.3, x + 0.3, g - 1, g + 1.12, zc - 1, zc + 1, 'wall');
-  }
-  // gate posts
-  for (const zz of [4, 8]) { const x = REC.x1 + 0.3, g = G(x, zz); batch.box(M.stone, x, g + 0.8, zz, 0.6, 1.6, 0.6, { tile: 1.5 }); world.addBox(x - 0.3, x + 0.3, g - 1, g + 1.6, zz - 0.3, zz + 0.3, 'wall'); }
-  // cans lined up on the wall for target practice
-  for (let i = 0; i < 6; i++) {
-    const z = -8 + i * 1.3, x = REC.x1 + 0.3;
-    props.push({ type: 'can', x, z, y: G(x, z) + 1.12 + 0.12 });
-  }
-  // path
-  strip(M.pave, -30, REC.x1, 4, 8, 0.03, 2, '#d8d2c4');
-  strip(M.pave, -32, -28, REC.z0 + 2, REC.z1 - 2, 0.03, 2, '#d8d2c4');
-  // trees
-  const tree = (x, z, s = 1) => {
-    const g = G(x, z);
-    batch.box(M.color, x, g + 1.5 * s, z, 0.45 * s, 3 * s, 0.45 * s, { color: '#5b4331' });
-    let geo = new THREE.IcosahedronGeometry(2.2 * s, 0); geo.computeVertexNormals();
-    batch.add(M.leaves, geo, { x, y: g + 4.2 * s, z, ry: R() * 3, color: ['#4d8a3a', '#3f7a33', '#5f9a44'][(R() * 3) | 0] });
-    geo = new THREE.IcosahedronGeometry(1.5 * s, 0); geo.computeVertexNormals();
-    batch.add(M.leaves, geo, { x: x + 0.8 * s, y: g + 5.4 * s, z: z - 0.4 * s, color: '#5a9642' });
-    world.addBox(x - 0.3 * s, x + 0.3 * s, g - 1, g + 3 * s, z - 0.3 * s, z + 0.3 * s, 'tree');
-  };
-  [[-16, -24, 1.1], [-22, -10, 0.9], [-38, -20, 1.2], [-14, 22, 1], [-24, 34, 1.15], [-38, 14, 0.95], [-36, 34, 1]].forEach(([x, z, s]) => tree(x, z, s));
-  // bench
-  const bench = (x, z) => { const g = G(x, z); batch.box(M.color, x, g + 0.45, z, 0.5, 0.08, 1.8, { color: '#7b5a3a' }); batch.box(M.color, x - 0.22, g + 0.75, z, 0.06, 0.5, 1.8, { color: '#7b5a3a' }); batch.box(M.color, x, g + 0.22, z - 0.8, 0.5, 0.45, 0.08, { color: '#333' }); batch.box(M.color, x, g + 0.22, z + 0.8, 0.5, 0.45, 0.08, { color: '#333' }); world.addBox(x - 0.3, x + 0.3, g - 1, g + 0.5, z - 0.9, z + 0.9, 'bench'); };
-  bench(-26, 12); bench(-26, -2);
-  // Rec sign
-  { const x = REC.x1 + 0.9, z = 10.2, g = G(x, z); batch.box(M.color, x, g + 0.9, z - 1.1, 0.08, 1.8, 0.08, { color: '#333' }); batch.box(M.color, x, g + 0.9, z + 1.1, 0.08, 1.8, 0.08, { color: '#333' });
-    signMesh(TX.signTexture({ text: 'VALE REC', sub: 'NO BALL GAMES · NO FUN · NO DOGS (EXCEPT BARRY)', bg: '#1d4f2a', accent: '#e0d36b', w: 512, h: 128 }), x + 0.05, g + 1.5, z, 2.4, 0.6, Math.PI / 2); }
-
-  // ---------- Roadworks (construction area) closing half of Owler Lane ----------
-  {
-    const cx = -30, cz = 48.4;
-    const g = G(cx, cz);
-    // skip
-    batch.box(M.color, cx, g + 0.7, cz, 3.6, 1.4, 1.8, { color: '#e2b007' });
-    batch.box(M.color, cx, g + 1.2, cz, 3.2, 0.5, 1.4, { color: '#6d655a' });
-    world.addBox(cx - 1.8, cx + 1.8, g - 1, g + 1.4, cz - 0.9, cz + 0.9, 'skip');
-    // red & white barriers separating the dig from the open lane
-    for (let i = 0; i < 5; i++) {
-      const x = cx - 7 + i * 2.2, z = cz + 1.8, gg = G(x, z);
-      batch.box(M.color, x, gg + 0.8, z, 2, 0.25, 0.08, { color: i % 2 ? '#d33' : '#f4f4f4' });
-      batch.box(M.color, x - 0.9, gg + 0.45, z, 0.08, 0.9, 0.5, { color: '#333' });
-      world.addBox(x - 1, x + 1, gg - 1, gg + 0.95, z - 0.1, z + 0.1, 'barrier');
-    }
-    // a hole in the road (dark patch) and a pile of spoil
-    strip(M.color, cx - 6.5, cx - 3, cz - 1, cz + 1, 0.035, 0, '#2a2622', 2);
-    batch.box(M.color, cx + 3.5, g + 0.3, cz, 1.8, 0.6, 1.4, { color: '#6a5037', ry: 0.4 });
-    for (let i = 0; i < 5; i++) props.push({ type: 'cone', x: cx - 6.5 + i * 1.7, z: cz + 2.8 });
-    // portable loo on the pavement
-    const lx = cx + 6.5, lz = 45.2, lg = G(lx, lz);
-    batch.box(M.color, lx, lg + 1.2, lz, 1.2, 2.4, 1.2, { color: '#2f7fd0' });
-    batch.box(M.color, lx, lg + 2.45, lz, 1.3, 0.1, 1.3, { color: '#f4f4f4' });
-    world.addBox(lx - 0.6, lx + 0.6, lg - 1, lg + 2.5, lz - 0.6, lz + 0.6, 'loo');
-    signMesh(TX.signTexture({ text: 'LOO-TASTIC', sub: 'PORTABLE TOILET HIRE', bg: '#f4f4f4', fg: '#2f7fd0', accent: '#2f7fd0', w: 256, h: 96 }), lx, lg + 1.9, lz + 0.62, 1.1, 0.4, 0);
-    interactables.push({ x: lx, z: lz + 1.2, radius: 1.8, prompt: 'Knock on the loo', lines: ['<b>Voice inside:</b> "OCCUPIED! Been occupied since Tuesday, love."', '<b>Voice inside:</b> "I\'m not coming out till the roadworks finish."', '<b>Voice inside:</b> "...Is it still Tuesday?"'] });
-  }
-
-  // ---------- street furniture ----------
-  // Lamp posts
-  const lamp = (x, z, dir) => {
-    const g = G(x, z);
-    batch.box(M.color, x, g + 3.5, z, 0.16, 7, 0.16, { color: '#5a6066' });
-    batch.box(M.color, x + dir * 0.6, g + 6.95, z, 1.3, 0.1, 0.12, { color: '#5a6066' });
-    batch.box(M.color, x + dir * 1.15, g + 6.85, z, 0.5, 0.14, 0.3, { color: '#fff3c4' });
-    world.addBox(x - 0.1, x + 0.1, g - 1, g + 7, z - 0.1, z + 0.1, 'lamp');
-  };
-  for (let z = ROAD.zMin + 10; z < ROAD.zMax; z += 24) { lamp(pw - 0.6, z, -1); lamp(-pw + 0.6, z + 12, 1); }
-
-  // Bus stop outside the rec (back to the wall, open to the road)
-  {
-    const x = -pw + 1.5, z = -14, g = G(x, z);
-    batch.box(M.color, x - 0.9, g + 1.3, z, 0.06, 2.6, 3.4, { color: '#3a4a5a' });   // back panel
-    batch.box(M.color, x, g + 2.65, z, 2.2, 0.1, 3.6, { color: '#2b3845' });         // roof
-    batch.box(M.color, x - 0.6, g + 0.55, z, 0.4, 0.06, 2.8, { color: '#6e7b87' });   // perch seat
-    batch.box(M.color, x, g + 1.3, z - 1.75, 1.8, 2.6, 0.05, { color: '#a7c7d9' });  // side panel
-    for (const zz of [-1.7, 1.7]) batch.box(M.color, x + 0.95, g + 1.3, z + zz, 0.08, 2.6, 0.08, { color: '#2b3845' });
-    world.addBox(x - 1.0, x - 0.8, g - 1, g + 2.6, z - 1.8, z + 1.8, 'shelter');
-    world.addBox(x - 0.9, x + 0.9, g - 1, g + 2.6, z - 1.8, z - 1.7, 'shelter');
-    const px = -ROAD.halfWidth - 0.6, pz = z - 3.2, pg = G(px, pz);
-    batch.box(M.color, px, pg + 1.6, pz, 0.1, 3.2, 0.1, { color: '#333' });
-    world.addBox(px - 0.08, px + 0.08, pg - 1, pg + 3.2, pz - 0.08, pz + 0.08, 'pole');
-    signMesh(TX.signTexture({ text: 'BUS', sub: 'FIR VALE SHOPS · EVERY 10 MINS (IN THEORY)', bg: '#e8e8e8', fg: '#1a3d8f', accent: '#e8b400', w: 256, h: 160 }), px + 0.07, pg + 3.0, pz, 0.8, 0.5, Math.PI / 2);
-    interactables.push({ x, z, radius: 2.2, prompt: 'Read the timetable', lines: ['<b>Timetable:</b> "Buses every 10 minutes. Usually in threes. Mostly at 2am."', 'Someone has written <b>"THE BUS IS A MYTH"</b> underneath in marker pen.'] });
-  }
-
-  // Red post box (generic pillar box shape)
-  { const x = pw - 0.8, z = -34, g = G(x, z); batch.box(M.color, x, g + 0.75, z, 0.55, 1.5, 0.55, { color: '#c4161c' }); batch.box(M.color, x, g + 1.55, z, 0.62, 0.12, 0.62, { color: '#a01217' }); world.addBox(x - 0.3, x + 0.3, g - 1, g + 1.6, z - 0.3, z + 0.3, 'postbox'); }
-
-  // Street name plates on little posts
-  const streetSign = (text, x, z, ry) => {
-    const g = G(x, z);
-    const ox = Math.cos(ry) * 0.85, oz = -Math.sin(ry) * 0.85;
-    batch.box(M.color, x - ox, g + 0.6, z - oz, 0.08, 1.2, 0.08, { color: '#222' });
-    batch.box(M.color, x + ox, g + 0.6, z + oz, 0.08, 1.2, 0.08, { color: '#222' });
-    signMesh(TX.signTexture({ text, sub: 'SHEFFIELD 4', bg: '#fbfbf6', fg: '#111', accent: '#fbfbf6', w: 384, h: 96, font: 'bold 44px Arial, sans-serif' }), x, g + 1.2, z, 1.8, 0.45, ry);
-  };
-  streetSign('BARNSLEY ROAD', pw - 0.4, -36.5, -Math.PI / 2);
-  streetSign('PAGE HALL ROAD', 12, -47.9, 0);
-  streetSign('OWLER LANE', -pw - 2.5, 55.3, Math.PI);
-
-  // Bollards at the alley entrance
-  for (const z of [-35.5, -34.3]) { const x = 24.2, g = G(x, z); batch.box(M.color, x, g + 0.5, z, 0.2, 1.0, 0.2, { color: '#1b1b1b' }); world.addBox(x - 0.1, x + 0.1, g - 1, g + 1, z - 0.1, z + 0.1, 'bollard'); }
-
-  // Bins round the back of the shops
-  for (let z = -24; z < 30; z += 7) wheelieBin(21.8 + 0.4, z, Math.PI / 2, '#2a2a2a');
-
-  // A couple of shootable things outside the mini mart
-  props.push({ type: 'cone', x: pw - 0.6, z: 4.5 });
-
-  // ---------- distant Sheffield hills (never fogged, very cheap) ----------
-  const hillMat = new THREE.MeshBasicMaterial({ color: 0x8aa0a8, fog: false });
-  const hillMat2 = new THREE.MeshBasicMaterial({ color: 0x9fb2b6, fog: false });
-  const hills = new THREE.Group();
-  for (let i = 0; i < 26; i++) {
-    const a = (i / 26) * Math.PI * 2 + R() * 0.2, r = 330 + R() * 40;
-    const h = 30 + R() * 45;
-    const m = new THREE.Mesh(new THREE.ConeGeometry(70 + R() * 50, h, 5), i % 2 ? hillMat : hillMat2);
-    m.position.set(Math.cos(a) * r, -18 + h / 2 + (Math.sin(a) > 0 ? -8 : 10), Math.sin(a) * r);
-    hills.add(m);
-  }
-  // A few far-off tower blocks and a chimney on the skyline
-  const towerMat = new THREE.MeshBasicMaterial({ color: 0x7d8d95, fog: false });
-  [[-0.6, 300, 40, 14], [-0.45, 310, 52, 16], [2.2, 305, 36, 12], [2.9, 320, 70, 5]].forEach(([a, r, h, w]) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), towerMat);
-    m.position.set(Math.cos(a) * r, h / 2 - 5, Math.sin(a) * r); hills.add(m);
-  });
-  scene.add(hills);
-
-  // ---------- invisible map edges ----------
-  world.addBox(-200, 200, -50, 50, ROAD.zMin - 2, ROAD.zMin, 'edge');
-  world.addBox(-200, 200, -50, 50, ROAD.zMax, ROAD.zMax + 2, 'edge');
-  world.addBox(-114, -112, -50, 50, -200, 200, 'edge');
-  world.addBox(112, 114, -50, 50, -200, 200, 'edge');
-
-  const meshes = batch.build(scene);
-  for (const m of meshes) { m.castShadow = true; m.receiveShadow = true; }
-
-  // Beacon globes (animated)
-  const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff9a1a });
-  const beaconGeo = new THREE.SphereGeometry(0.22, 10, 8);
-  const beaconMeshes = beacons.map((p) => { const m = new THREE.Mesh(beaconGeo, beaconMat); m.position.copy(p); scene.add(m); return m; });
-
-  interactables.push({ x: startShop.x, z: startShop.zc, radius: 3, prompt: 'Talk to the shopkeeper', lines: [
-    '<b>Shopkeeper:</b> "Welcome to Fir Vale Mini Mart! We sell everything except the thing you want."',
-    '<b>Shopkeeper:</b> "That rifle? Found it in the skip on Owler Lane with a revolver and a note saying SORRY. No refunds."',
-    '<b>Shopkeeper:</b> "If you see a lad in a racing wheelchair, DO NOT accept his challenge. He cheats. With skill."',
+  // ---- the Fir Vale Mini Mart (our shop), shopkeeper ----
+  const mm = shopSpots.find((s) => s.sign === 0) || shopSpots[0];
+  interactables.push({ x: mm.front[0], z: mm.front[1], radius: 3, prompt: 'Talk to the shopkeeper', lines: [
+    '<b>Shopkeeper:</b> "Welcome to Fir Vale Mini Mart! Everything you need, except what you came in for."',
+    '<b>Shopkeeper:</b> "That rifle? Found it in a skip on Owler Lane with a revolver and a note saying SORRY. No refunds."',
+    '<b>Shopkeeper:</b> "Lad in the racing chair doing laps of Page Hall Road? That\'s Dez. Don\'t race him. He cheats. With skill."',
     '<b>Shopkeeper:</b> "Samosas are fresh. Fresh-ish. Fresh in spirit."',
   ] });
 
+  // ---- cans on the low wall in front of Fir Vale School ----
+  { const { x0, x1 } = PLACES.cansWall;
+    const wz = (x) => 205 + (x - 70) * 30 / 115 - 0.8, ry = Math.atan2(115, 30);
+    for (let x = x0; x < x1; x += 2) { const xc = x + 1, z = wz(xc), g = G(xc, z); batch.box(M.brick, xc, g + 0.55, z, 0.35, 1.1, 2.08, { tile: 1.3, color: '#e0c4b4', ry }); batch.box(M.stone, xc, g + 1.15, z, 0.42, 0.1, 2.1, { color: '#cfc3ad', ry }); world.addOBB(xc, z, 0.2, 1.04, ry, g - 1, g + 1.2, 'wall'); }
+    for (let i = 0; i < 6; i++) { const x = x0 + 16 + i * 1.3, z = wz(x); props.push({ type: 'can', x, z, y: G(x, z) + 1.2 + 0.02 }); } }
+
+  // ---- roadworks on Owler Lane (half the carriageway closed) ----
+  { const ow = net.byName('Owler Lane'), s0 = ow.length * PLACES.roadworks.t;
+    const P = (s, o) => net.pointAt(ow, s, o, {});
+    const c = P(s0, -ow.half / 2), ry = Math.atan2(c.tx, c.tz), g = G(c.x, c.z);
+    const f = new Frame(batch, c.x, c.z, ry, g);
+    f.box(M.plastic, 0, 0.7, 0, 1.8, 1.4, 3.6, { color: '#e2b007' }); f.box(M.stone, 0, 1.2, 0, 1.4, 0.5, 3.2, { color: '#6d655a' });
+    world.addOBB(c.x, c.z, 0.9, 1.8, ry, g - 1, g + 1.4, 'skip');
+    for (let k = -3; k <= 3; k++) {
+      const b = P(s0 + k * 2.2, -0.4), bg = G(b.x, b.z);
+      batch.box(M.plastic, b.x, bg + 0.8, b.z, 0.08, 0.25, 2, { color: k % 2 ? '#d33' : '#f4f4f4', ry: Math.atan2(b.tx, b.tz) });
+      world.addOBB(b.x, b.z, 0.1, 1, Math.atan2(b.tx, b.tz), bg - 1, bg + 0.95, 'barrier');
+      const cn = P(s0 + k * 2.2, 0.8); props.push({ type: 'cone', x: cn.x, z: cn.z, tag: 'roadworks' });
+    }
+    const lp = P(s0 + 12, -(ow.half + ow.pave - 0.9)), lg = G(lp.x, lp.z);
+    batch.box(M.plastic, lp.x, lg + 1.2, lp.z, 1.2, 2.4, 1.2, { color: '#2f7fd0' });
+    world.addBox(lp.x - 0.6, lp.x + 0.6, lg - 1, lg + 2.5, lp.z - 0.6, lp.z + 0.6, 'loo');
+    interactables.push({ x: lp.x, z: lp.z, radius: 2.2, prompt: 'Knock on the portaloo', lines: ['<b>Voice inside:</b> "OCCUPIED! Been occupied since Tuesday, love."', '<b>Voice inside:</b> "I\'m not coming out till they\'ve finished Owler Lane."', '<b>Voice inside:</b> "...Is it still Tuesday?"'] });
+  }
+  // a couple of cones outside the shops too
+  { const p = net.pointAt(phr, phr.length * 0.3, -(phr.half + 0.7), {}); props.push({ type: 'cone', x: p.x, z: p.z }); }
+
+  // ---- distant hills: Wincobank to the north-east, the city to the south ----
+  const hillMat = new THREE.MeshBasicMaterial({ color: 0x8aa0a8, fog: false }), hillMat2 = new THREE.MeshBasicMaterial({ color: 0x9fb2b6, fog: false });
+  const R = rng(3);
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2, r = 900 + R() * 120, h = 40 + R() * 60 + (Math.cos(a - 0.6) > 0.7 ? 50 : 0);
+    const m = new THREE.Mesh(new THREE.ConeGeometry(160 + R() * 120, h, 6), i % 2 ? hillMat : hillMat2);
+    m.position.set(Math.cos(a) * r, -25 + h / 2, Math.sin(a) * r); scene.add(m);
+  }
+
+  // ---- invisible map edges ----
+  world.addBox(BOUNDS.minX - 2, BOUNDS.maxX + 2, -50, 200, BOUNDS.minZ - 2, BOUNDS.minZ, 'edge');
+  world.addBox(BOUNDS.minX - 2, BOUNDS.maxX + 2, -50, 200, BOUNDS.maxZ, BOUNDS.maxZ + 2, 'edge');
+  world.addBox(BOUNDS.minX - 2, BOUNDS.minX, -50, 200, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
+  world.addBox(BOUNDS.maxX, BOUNDS.maxX + 2, -50, 200, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
+
+  const meshes = batch.build(scene);
+  for (const m of meshes) { m.castShadow = !m.userData.detail; m.receiveShadow = true; m.geometry.computeBoundingSphere(); }
+
+  // distance culling: hide far chunks (fog hides them anyway) and far detail
+  const detailRange = quality === 'low' ? 45 : quality === 'high' ? 110 : 75, farRange = quality === 'low' ? 150 : quality === 'high' ? 260 : 200;
+  let lodT = 0, lx = 1e9, lz = 1e9;
+  function updateLOD(pos, dt = 1) {
+    lodT -= dt;
+    const jumped = Math.hypot(pos.x - lx, pos.z - lz) > 15; // teleport/respawn: refresh now
+    if (lodT > 0 && !jumped) return;
+    lodT = 0.25; lx = pos.x; lz = pos.z;
+    for (const m of meshes) {
+      const s = m.geometry.boundingSphere; if (!s) continue;
+      const d = Math.hypot(s.center.x - pos.x, s.center.z - pos.z) - s.radius * 0.55;
+      m.visible = d < (m.userData.detail ? detailRange : farRange);
+      if (!m.userData.detail) m.castShadow = d < 45; // only nearby chunks draw into the shadow map
+    }
+  }
+
+  console.log(`Fir Vale built in ${Math.round(performance.now() - t0)} ms: ${meshes.length} meshes, ${world.boxes.length} colliders, ${parked} parked cars, ${shopSpots.length} shops`);
+
+  const surfaceAt = (x, z) => {
+    if (inPoly(schoolPoly, x, z)) return 'grass';
+    return net.surfaceAt(x, z);
+  };
+  // spawn on the Page Hall Road pavement looking down the shops; Dez laps
+  // the opposite pavement
+  const sp = net.pointAt(phr, phr.length * 0.32, -(phr.half + phr.pave * 0.45), {});
+  const spawn = { x: sp.x, z: sp.z, yaw: Math.atan2(-sp.tx, -sp.tz) - 0.12 };
+  const dezPath = []; for (let k = 0.12; k <= 0.9; k += 0.06) { const p = net.pointAt(phr, phr.length * k, -(phr.half + 1.3), {}); dezPath.push([p.x, p.z]); }
   return {
-    // Start on the far pavement, looking straight across at the Mini Mart.
-    spawn: { x: -pw + 1.6, z: startShop.zc + 1.5, yaw: -Math.PI / 2 + 0.12 },
-    startShop,
-    interactables,
-    props,
-    beaconMat,
-    beaconMeshes,
-    meshCount: meshes.length + signMeshes.length,
-    paveX: pw,
-    surfaceAt,
+    spawn,
+    startShop: { x: mm.front[0], zc: mm.front[1] },
+    interactables, props, beaconMat, meshCount: meshes.length,
+    surfaceAt, net, routes: ROUTES, dezPath, updateLOD,
+    roadsForMap: ROADS, junction: JUNCTION, bounds: BOUNDS, sites: SITES,
   };
 }

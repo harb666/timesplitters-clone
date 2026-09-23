@@ -54,7 +54,8 @@ console.log('after shots', await snap());
 const rb = await page.locator('#btn-reload').boundingBox();
 await touch('touchStart', [{ x: rb.x + rb.width / 2, y: rb.y + rb.height / 2, id: 4 }]); await page.waitForTimeout(60); await touch('touchEnd', []);
 // (headless software rendering is slow, so wait on the game state, not the clock)
-await page.waitForFunction(() => window.__firvale.arsenal.ammo === 30, null, { timeout: 30000 });
+await page.evaluate(() => { const g = window.__firvale; g.frozen = true; g.advance(3.2); g.frozen = false; });
+if (await page.evaluate(() => window.__firvale.arsenal.ammo) !== 30) throw new Error('reload did not refill the magazine');
 console.log('after reload', await snap());
 
 // Teleport to look at key places for screenshots.
@@ -63,19 +64,20 @@ const view = async (name, x, z, yaw, pitch = 0) => {
   await page.waitForTimeout(900);
   await page.screenshot({ path: path.join(outDir, name) });
 };
-await view('04-shopfront.png', -2, -3, -1.2);
-await view('05-street-north.png', 0.5, 30, 0, 0.05);
-await view('06-rec-cans.png', -4, -4, 1.4);
-await view('07-roadworks.png', -22, 51, 1.35);
-await view('08-page-hall.png', 30, -42, -1.57 + 3.14159);
-// Watch the car go past
-await page.evaluate(() => { const c = window.__firvale.cars[0]; c.z = -40; c.pause = 0; c.car.visible = true; c.dir = 1; c.x = 2.4; });
-await view('09-falcon.png', 7, -20, 3.14159 - 0.5);
-await page.evaluate(() => { const g = window.__firvale; g.dez.x = 6.3; g.dez.z = -8; g.dez.state = 'wheelie'; g.dez.stateT = 5; });
-await view('10-dez.png', 3.2, -5.5, -1.0 + 0.2);
+// Real streets (positions relative to the road data)
+const roadView = async (name, road, i, frac, off, turn = 0) => {
+  await page.evaluate(([road, i, frac, off, turn]) => { const g = window.__firvale, r = g.map.net.byName(road, i), p = g.map.net.pointAt(r, r.length * frac, off * (r.half + 1.4), {}); g.player.spawn(p.x, p.z, Math.atan2(-p.tx, -p.tz) + turn); }, [road, i, frac, off, turn]);
+  await page.waitForTimeout(900);
+  await page.screenshot({ path: path.join(outDir, name) });
+};
+await roadView('04-page-hall-road.png', 'Page Hall Road', 0, 0.55, -1);
+await roadView('05-junction.png', 'Firth Park Road', 0, 0.06, 1, 0.3);
+await roadView('06-hinde-house-lane.png', 'Hinde House Lane', 0, 0.3, -1);
+await roadView('07-owler-lane.png', 'Owler Lane', 0, 0.3, 1, -0.3);
+await roadView('08-barnsley-road.png', 'Barnsley Road', 1, 0.15, 1, Math.PI);
 // ---- weapon showcase ----
 const W = async (name, fn, wait = 400) => { await page.evaluate(fn); await page.waitForTimeout(wait); await page.screenshot({ path: path.join(outDir, name) }); };
-await page.evaluate(() => { const g = window.__firvale; g.player.spawn(-6.6, -7.5, -Math.PI / 2 + 0.12); });
+await page.evaluate(() => { const g = window.__firvale; g.player.spawn(g.map.spawn.x, g.map.spawn.z, g.map.spawn.yaw); });
 await W('w01-ak-hip.png', () => {}, 800);
 await W('w02-ak-ads.png', () => { window.__input.aim = true; }, 900);
 console.log('final', await snap());

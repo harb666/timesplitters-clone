@@ -77,11 +77,15 @@ export class Arsenal {
     if (WOOD.has(tag)) return 'wood';
     if (tag === 'wall') return 'stone';
     if (tag === 'building') {
-      // shopfront glass sits on the road-facing wall of the parade at window height
+      // shopfront glass: the road-facing wall of a shop, at window height
       const h = point.y - box.minY - 2;
-      if (box.shop && h > 0.6 && h < 3.1 && Math.abs(point.x - box.minX) < 0.05) return 'glass';
+      if (box.shop && h > 0.4 && h < 2.9) {
+        const lz = box.rot ? (point.x - box.cx) * box.s + (point.z - box.cz) * box.c : 0;
+        if (lz > box.hd - 0.1) return 'glass';
+      }
       return 'brick';
     }
+    if (tag === 'church') return 'stone';
     return 'concrete';
   }
 
@@ -117,7 +121,7 @@ export class Arsenal {
     }
     if (dist >= range) return false;
     const n = _n.set(0, 0, 0);
-    if (res.normalAxis >= 0) n.setComponent(res.normalAxis, res.normalSign); else n.set(0, 1, 0);
+    if (res.normal) n.fromArray(res.normal); else if (res.normalAxis >= 0) n.setComponent(res.normalAxis, res.normalSign); else n.set(0, 1, 0);
     const box = res.box, mat = this.material(box, p);
     if (box && box.owner && (box.tag === 'car' || box.tag === 'npc')) { box.owner.onShot?.(p); g.hud.hitmarker(); }
     g.effects.impact(p.clone(), n.clone(), mat);

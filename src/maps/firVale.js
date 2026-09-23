@@ -242,6 +242,14 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
     return d[0] > 120 ? 'grass' : d[1] > 120 ? 'dirt' : 'paving';
   };
 
+  // how grassy the ground is here (0..1), for the 3-D grass: not on roads/pavements/paths
+  const grassAt = (x, z) => {
+    const d = maskData(mask, Math.floor(x - mask.x0), Math.floor(z - mask.z0));
+    const a = d[0] / 255 * (1 - d[2] / 255) * (1 - d[1] / 510);
+    if (a < 0.45 || net.onRoadOrPavement(x, z, 0.35)) return 0;
+    return a;
+  };
+
   // spawn on the Page Hall Road pavement outside the Mini Mart, looking down the shops
   const mmN = net.nearest(mm.front[0], mm.front[1], null, (r) => r.name === 'Page Hall Road') || net.nearestStreet(mm.front[0], mm.front[1]);
   const spR = mmN ? mmN.road : phr;
@@ -254,7 +262,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
     spawn,
     startShop: { x: mm.front[0], zc: mm.front[1], y: mm.gF },
     interactables, props, beaconMat, signals: SIGNALS, meshCount: meshes.length,
-    surfaceAt, net, dezPath, updateLOD, cansAt, churchAt: churchB ? [churchB.o.cx, churchB.o.cz] : null,
+    surfaceAt, grassAt, net, dezPath, updateLOD, cansAt, churchAt: churchB ? [churchB.o.cx, churchB.o.cz] : null,
     bounds: BOUNDS, shopSpots: fp.shopSpots, buildings: fp.list, landuse: OSM.landuse, junctions, nearJunction,
   };
 }

@@ -265,14 +265,38 @@ export function pavingPBR(n = 256) {
   }, 4));
 }
 
+// Close-mown lawn seen from above: thousands of painted blades in mixed
+// greens over a thatch of dry dead blades and dark soil, with clover
+// patches; tiles seamlessly.
 export function grassPBR(n = 256) {
-  return cached('grass' + n, () => buildSet(n, (u, v) => {
-    const blade = fbm(u, v * 0.4, { freq: 96, oct: 2, seed: 18 });
-    const m = fbm(u, v, { freq: 4, oct: 4, seed: 19 });
-    const dry = m > 0.62 ? 1 : 0;
-    const c = 0.7 + blade * 0.5;
-    return { r: (62 + dry * 40) * c, g: (98 + dry * 10) * c, b: (40 + dry * 5) * c, rough: 0.95, h: blade };
-  }, 3));
+  return cached('grass2' + n, () => {
+    const c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d');
+    const r = rng(181), k = n / 256;
+    g.fillStyle = 'rgb(52,58,34)'; g.fillRect(0, 0, n, n);
+    const line = (x, y, a, len, w, col) => {
+      const dx = Math.cos(a) * len, dy = Math.sin(a) * len;
+      g.strokeStyle = col; g.lineWidth = w;
+      for (const ox of [-n, 0, n]) for (const oy of [-n, 0, n]) {
+        if (x + ox + len < 0 || x + ox - len > n || y + oy + len < 0 || y + oy - len > n) continue;
+        g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + dx, y + oy + dy); g.stroke();
+      }
+    };
+    g.lineCap = 'round';
+    for (let i = 0; i < 1800 * k * k; i++) line(r() * n, r() * n, r() * 6.3, (3 + r() * 6) * k, (0.7 + r() * 0.6) * k, `hsl(${40 + r() * 18},${28 + r() * 18}%,${26 + r() * 18}%)`);   // thatch
+    for (let i = 0; i < 26; i++) {                                                                                                   // clover patches
+      const cx = r() * n, cy = r() * n, rad = (6 + r() * 12) * k;
+      for (let j = 0; j < 40 * k; j++) { const a = r() * 6.3, d = r() * rad; g.fillStyle = `hsl(${95 + r() * 15},${40 + r() * 15}%,${22 + r() * 12}%)`; g.beginPath(); g.arc((cx + Math.cos(a) * d + n) % n, (cy + Math.sin(a) * d + n) % n, (1.2 + r()) * k, 0, 7); g.fill(); }
+    }
+    for (let i = 0; i < 7000 * k * k; i++) {                                                                                         // live blades
+      const lum = 20 + r() * 26, tip = r() < 0.12;
+      line(r() * n, r() * n, r() * 6.3, (2.5 + r() * 5) * k, (0.6 + r() * 0.7) * k, tip ? `hsl(${62 + r() * 12},${35 + r() * 15}%,${lum + 10}%)` : `hsl(${78 + r() * 26},${34 + r() * 26}%,${lum}%)`);
+    }
+    const px = g.getImageData(0, 0, n, n).data;
+    return buildSet(n, (u, v, x, y) => {
+      const i = (y * n + x) * 4, R = px[i], G = px[i + 1], B = px[i + 2];
+      return { r: R, g: G, b: B, rough: 0.92, h: (R + G * 1.4 + B) / (3.4 * 255) };
+    }, 3);
+  });
 }
 
 export function slatePBR(n = 256) {

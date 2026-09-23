@@ -42,6 +42,23 @@ node scripts/serve.mjs
 Settings: look sensitivity, aim assist, auto-fire, gyro aiming, left-handed
 layout, invert look, graphics quality and volume. They are remembered.
 
+## What's new in 0.5 — missions 2–5 and Zip
+
+- **Five missions**, one after another, then free roam:
+  1. *Welcome to Fir Vale* — look around, meet Dez, say hello to locals,
+     knock cans off the school wall, flatten the roadworks cones.
+  2. *Trolley Dash* — the Mini Mart's trolley rolls off downhill; catch it
+     and push it home.
+  3. *Zip!* — an original fast blue creature (floppy-eared hare-fox,
+     goggles, mustard scarf, glowing tail) nicks the samosas and runs the
+     real streets; catch it at each hiding spot.
+  4. *The Fir Vale Grand Prix* — race Dez from Page Hall Road to St
+     Cuthbert's through checkpoints.
+  5. *Parcel Panic* — shoot down rogue "Vale Parcels" delivery drones
+     that dive-bomb you with parcels.
+- **Waypoint beacon**: a teal beam over every objective, its distance on
+  the HUD and a marker on the minimap. Routes follow the real streets.
+
 ## What's new in 0.4 — the real map, a real sky, and the people of Fir Vale
 
 - **Built from real open map data.** Every street, all 1,800 building

@@ -89,6 +89,12 @@ Boots the game in a headless browser pretending to be an iPhone, walks,
 looks, shoots, reloads, takes screenshots into `scripts/out/`, and fails if
 the page reports an error. Requires Playwright + Chromium.
 
+## Publishing the playable link
+
+The iPhone link is a claude.ai artifact. `node scripts/build-artifact.mjs`
+makes the version of `index.html` it needs (`scripts/out/artifact.html`);
+Claude republishes it together with `src/` after each change.
+
 ## Publishing with GitHub Pages (optional)
 
 A workflow in `.github/workflows/pages.yml` publishes the game whenever

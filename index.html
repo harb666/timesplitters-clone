@@ -104,5 +104,13 @@
   <div id="fatal" class="hidden"></div>
 
   <script type="module" src="src/main.js"></script>
+  <script>
+    // If the game code never starts (old browser, blocked files), say so
+    // instead of sitting on "Loading…" forever.
+    setTimeout(function () {
+      var l = document.getElementById('loading');
+      if (l && l.textContent === 'Loading…') l.textContent = 'The game files did not load. Check your connection and refresh. (iOS 16.4 or newer is needed.)';
+    }, 12000);
+  </script>
 </body>
 </html>

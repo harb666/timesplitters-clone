@@ -4,6 +4,7 @@
 // map at its edges.
 import * as THREE from 'three';
 import { buildFalconR } from '../models/falconR.js';
+import { buildVehicle } from '../models/vehicles.js';
 import { EngineSound } from '../audio/engineSound.js';
 import { groundHeight as G } from '../core/world.js';
 import { sfx } from '../audio/audio.js';
@@ -18,9 +19,11 @@ const DRIVER_LINES = {
 };
 
 export class Car {
-  constructor(scene, world, { net, paint, plate, speedBias = 0, hud, start = 0.3, others, focus } = {}) {
+  constructor(scene, world, { net, paint, plate, speedBias = 0, hud, start = 0.3, others, focus, type = 'falcon', audible = true } = {}) {
     this.scene = scene; this.world = world; this.hud = hud; this.net = net; this.others = others || []; this.focus = focus;
-    const m = buildFalconR({ paint, plate });
+    const m = type === 'falcon' ? buildFalconR({ paint, plate }) : buildVehicle(type, { paint });
+    this.type = type; this.racer = type === 'falcon'; this.audible = audible;
+    this.dims = m.dims || { L: 4.2, W: 1.9, H: 1.45 };
     Object.assign(this, m);
     this.car.rotation.order = 'YXZ';
     scene.add(this.car);
@@ -32,7 +35,7 @@ export class Car {
     this.bounceY = 0; this.bounceV = 0; this.pitch = 0; this.roll = 0;
     this.lastAccel = 0; this.popCooldown = 0; this.hornCooldown = 0; this.pause = 0;
     this.braking = false; this.angry = 0;
-    this.collider = { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0, tag: 'car', owner: this, rot: 1e-6, cx: 0, cz: 0, hw: 0.95, hd: 2.15, c: 1, s: 0 };
+    this.collider = { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0, tag: 'car', owner: this, rot: 1e-6, cx: 0, cz: 0, hw: this.dims.W / 2, hd: this.dims.L / 2, c: 1, s: 0 };
     world.dynamic.push(this.collider);
     this.engine = null;
     this.flameT = 0;
@@ -47,7 +50,7 @@ export class Car {
   // (main roads preferred, no U-turns, mostly straight on).
   pickRoute(start = 0) {
     const net = this.net, focus = this.focus;
-    const W = { a: 6, b: 3, r: 0.6 };
+    const W = this.type === 'bus' ? { a: 6, b: 2 } : { a: 6, b: 3, r: 0.6 };
     const cands = net.roads.filter((r) => W[r.kind] && r.length > 15 && (r.kind !== 'r' || r.width >= 5.6));
     const dist = (r) => { if (!focus) return 200; const m = r.samples[r.samples.length >> 1]; return Math.hypot(m.x - focus.x, m.z - focus.z); };
     const pickW = (list, w) => { let t = 0; for (const x of list) t += w(x); let u = Math.random() * t; for (const x of list) { u -= w(x); if (u <= 0) return x; } return list[list.length - 1]; };
@@ -108,7 +111,7 @@ export class Car {
     this.x = p.x; this.z = p.z; this.hx = Math.sin(this.heading); this.hz = Math.cos(this.heading);
   }
 
-  startAudio() { if (!this.engine) this.engine = new EngineSound(); }
+  startAudio() { if (!this.engine && this.audible) this.engine = new EngineSound(); }
 
 
   onShot(point) {
@@ -125,7 +128,7 @@ export class Car {
     // --- decide what speed we want ---
     let want = this.target;
     this.showOffTimer -= dt;
-    if (this.showOffTimer <= 0) { this.showOff = 2 + Math.random() * 1.5; this.showOffTimer = 9 + Math.random() * 10; }
+    if (this.showOffTimer <= 0 && this.racer) { this.showOff = 2 + Math.random() * 1.5; this.showOffTimer = 9 + Math.random() * 10; }
     if (this.showOff > 0) { this.showOff -= dt; want = 22; if (this.showOff <= 0) this.liftOff = 1.2; }
     // slow for junctions ahead on the route
     { const P = this.path; let i = this.seg; while (i < P.length - 1 && P[i].s < this.s + 30) { if (P[i].j && P[i].s > this.s - 4) { want = Math.min(want, 5.5 + Math.max(0, P[i].s - this.s) * 0.35); break; } i++; } }
@@ -136,7 +139,7 @@ export class Car {
     // obstacle: the player in our lane ahead
     const dxp = player.pos.x - this.x, dzp = player.pos.z - this.z;
     const ahead = dxp * this.hx + dzp * this.hz, lat = Math.abs(dxp * this.hz - dzp * this.hx);
-    const stopDist = 6 + this.speed * this.speed / 14;
+    const stopDist = this.dims.L / 2 + 4 + this.speed * this.speed / 14;
     let blocked = false;
     if (lat < 2.3 && ahead > 0 && ahead < stopDist + 4) { blocked = true; want = Math.min(want, Math.max(0, (ahead - 5) * 0.8)); }
     // queue behind other cars
@@ -144,7 +147,7 @@ export class Car {
       if (o === this || !o.car.visible) continue;
       const dx = o.x - this.x, dz = o.z - this.z, fa = dx * this.hx + dz * this.hz, la = Math.abs(dx * this.hz - dz * this.hx);
       const same = o.hx * this.hx + o.hz * this.hz > 0.3;
-      if (same && la < 2.5 && fa > 0 && fa < 16) want = Math.min(want, Math.max(0, (fa - 7) * 0.9));
+      const gap = (this.dims.L + o.dims.L) / 2 + 3; if (same && la < 2.5 && fa > 0 && fa < gap + 9) want = Math.min(want, Math.max(0, (fa - gap) * 0.9));
     }
     if (blocked && this.speed < 1.5 && this.hornCooldown <= 0) {
       sfx.horn(this.car.position.x, 1, this.car.position.z); this.hornCooldown = 3 + Math.random() * 2;
@@ -228,7 +231,7 @@ export class Car {
     c.rot = this.heading || 1e-6; c.c = Math.cos(c.rot); c.s = Math.sin(c.rot); c.cx = this.x; c.cz = this.z;
     const ex = Math.abs(c.c) * c.hw + Math.abs(c.s) * c.hd, ez = Math.abs(c.s) * c.hw + Math.abs(c.c) * c.hd;
     c.minX = this.x - ex; c.maxX = this.x + ex; c.minZ = this.z - ez; c.maxZ = this.z + ez;
-    c.minY = gy; c.maxY = gy + 1.45;
+    c.minY = gy; c.maxY = gy + this.dims.H;
   }
 
   checkPlayerHit(player, dt) {
@@ -236,8 +239,9 @@ export class Car {
     const dx = player.pos.x - this.x, dz = player.pos.z - this.z;
     const fwd = dx * this.hx + dz * this.hz, lat = dx * this.hz - dz * this.hx;
     const feet = player.pos.y - player.eye;
-    if (feet > G(this.x, this.z) + 1.4) return; // jumped over the bonnet!
-    if (Math.abs(lat) < 0.95 + player.radius + 0.05 && fwd > -2.2 && fwd < 2.2 + player.radius + 0.3) {
+    if (feet > G(this.x, this.z) + this.dims.H - 0.05) return; // jumped over the bonnet!
+    const hw = this.dims.W / 2, hl = this.dims.L / 2;
+    if (Math.abs(lat) < hw + player.radius + 0.05 && fwd > -hl && fwd < hl + player.radius + 0.3) {
       const side = lat >= 0 ? 1 : -1, force = this.speed;
       // knock sideways (perpendicular) and forwards along the car's travel
       player.knock(this.hz * side * force * 0.55 + this.hx * force * 0.9, 3 + force * 0.25, -this.hx * side * force * 0.55 + this.hz * force * 0.9);

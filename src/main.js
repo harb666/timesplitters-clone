@@ -17,7 +17,7 @@ import { Props } from './entities/props.js';
 import { Effects } from './entities/effects.js';
 import { Hud } from './ui/hud.js';
 import { initAudio, updateListener, setVolume, sfx, makeHum, suspendAudio } from './audio/audio.js';
-import { MissionRunner, allMissions } from './core/missions.js';
+import { MissionRunner, freeRoam } from './core/missions.js';
 import { makeSky, SUN_DIR } from './render/sky.js';
 import { Crowd } from './entities/crowd.js';
 
@@ -101,8 +101,11 @@ function boot() {
   // Traffic: one Falcon R doing laps, one parked up in the car park.
   // Traffic on the real routes through the Fir Vale junction.
   game.cars = [];
-  const carSpecs = [[0x1d5fd1, 'FV24 ZAP', 3, 0.35], [0xe8e8e8, 'S5 7NGH', 0, 0.6], [0x2b2b2e, 'YA19 OWL', 1, 0.15], [0x9a1b1b, 'S4 8PHR', -1, 0.8], [0x6b7075, 'S5 0FV', 0, 0.5], [0x2f5d3a, 'YR68 PHR', -2, 0.25]];
-  for (const [paint, plate, bias, start] of carSpecs) game.cars.push(new Car(scene, world, { net: map.net, paint, plate, speedBias: bias, hud, start, others: game.cars, focus: player.pos }));
+  // one boy racer in his Falcon R, and everyday traffic: hatchbacks, SUVs,
+  // saloons, estates, vans and a bus
+  const carSpecs = [['falcon', 0x1d5fd1, 3], ['hatch', null, 0], ['suv', null, 0], ['saloon', null, -1], ['van', null, -1], ['bus', null, -3], ['hatch', null, 1],
+    ['estate', null, 0], ['suv', null, -1], ['hatch', null, 0], ['van', null, -2], ['saloon', null, 0]].slice(0, settings.quality === 'low' ? 7 : 12);
+  carSpecs.forEach(([type, paint, bias], i) => game.cars.push(new Car(scene, world, { net: map.net, type, paint, plate: 'FV24 ZAP', speedBias: bias, hud, start: (i * 0.37) % 1, others: game.cars, focus: player.pos, audible: i < 5 })));
   scene.traverse((o) => { if (o.isMesh && !o.castShadow && o.geometry && o.material && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
 
   const dez = new Dez(scene, world, { path: map.dezPath, hud });
@@ -151,7 +154,7 @@ function boot() {
 
   const minimap = new Minimap(map);
   map.updateLOD(player.pos);
-  const mission = new MissionRunner(game, allMissions(game));
+  const mission = new MissionRunner(game, freeRoam());
   game.mission = mission;
 
   // ---- interaction (USE) ----

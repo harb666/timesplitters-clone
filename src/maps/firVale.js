@@ -16,7 +16,8 @@ import { RoadNetwork, DRIVABLE } from './firvale/roads.js';
 import { windowAtlas, signAtlas, displayAtlas, Frame, rng } from './firvale/buildings.js';
 import { buildFootprints } from './firvale/footprints.js';
 import { buildChurch } from './firvale/landmarks.js';
-import { buildStreetscape, plantTrees, parkCars } from './firvale/streetscape.js';
+import { buildStreetscape, plantTrees, parkCars, parkLots, setFleet } from './firvale/streetscape.js';
+import { ParkedFleet } from '../models/vehicles.js';
 import { landMask, groundMaterial, buildGround, buildFarTerrain } from './firvale/terrain.js';
 import { inPoly, flatToPts, centroid } from './firvale/geom.js';
 
@@ -143,7 +144,9 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   const nearJunction = (x, z, r) => junctions.some(([jx, jz]) => (jx - x) ** 2 + (jz - z) ** 2 < r * r);
   const busStops = OSM.furniture.filter((f) => f.k === 'bus').map((f) => f.p);
   const keepClear = (x, z) => nearJunction(x, z, 11) || Math.hypot(x - PLACES.miniMart[0], z - PLACES.miniMart[1]) < 22 || busStops.some(([bx, bz]) => (bx - x) ** 2 + (bz - z) ** 2 < 144) || world.near(x, z, 1, []).some((b) => b.tag !== 'edge' && b.tag !== 'building' && b.tag !== 'lamp' && Math.hypot(((b.minX + b.maxX) / 2) - x, ((b.minZ + b.maxZ) / 2) - z) < 2.5);
-  const parked = parkCars(batch, M, world, net, keepClear);
+  const fleet = new ParkedFleet(scene, { range: quality === 'low' ? 55 : quality === 'high' ? 110 : 75 });
+  setFleet(fleet);
+  const parked = parkCars(batch, M, world, net, keepClear) + parkLots(batch, M, world, net, OSM, quality === 'low' ? 300 : 700);
 
   // ---- key places for the missions ----
   const phr = net.longest('Page Hall Road');
@@ -206,6 +209,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   world.addBox(BOUNDS.minX - 2, BOUNDS.minX, -80, 300, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
   world.addBox(BOUNDS.maxX, BOUNDS.maxX + 2, -80, 300, BOUNDS.minZ, BOUNDS.maxZ, 'edge');
 
+  fleet.build(); setFleet(null);
   const meshes = batch.build(scene);
   for (const m of meshes) { m.castShadow = !m.userData.detail && m.material !== gmat; m.receiveShadow = true; m.geometry.computeBoundingSphere(); }
 
@@ -217,6 +221,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
     const jumped = Math.hypot(pos.x - lx, pos.z - lz) > 15; // teleport/respawn: refresh now
     if (lodT > 0 && !jumped) return;
     lodT = 0.25; lx = pos.x; lz = pos.z;
+    fleet.update(pos);
     for (const m of meshes) {
       const s = m.geometry.boundingSphere; if (!s) continue;
       const d = Math.hypot(s.center.x - pos.x, s.center.z - pos.z) - s.radius * 0.55;

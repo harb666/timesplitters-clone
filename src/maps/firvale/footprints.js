@@ -112,7 +112,7 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   const R = rng(1904);
   const list = analyse(osm, net, special);
   const detailMs = new Mesher(), ms = new Mesher();
-  const plots = [];
+  const plots = [], pending = [];
 
   // ---- pass 1: split residential footprints into houses ----
   for (const B of list) {
@@ -182,11 +182,12 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   for (const B of list) {
     if (B.type === 'res') buildResidential(B, ms, detailMs, batch, M, world, net, R, signs, shopSpots);
     else if (B.type === 'shed') buildBlock(B, ms, batch, M, world, R, { h: 2.6, wall: M.brick, col: '#b9a597', roofCol: '#4a4d52', windows: false });
-    else if (B.type !== 'skip') buildBig(B, ms, batch, M, world, R);
+    else if (B.type !== 'skip') buildBig(B, ms, batch, M, world, R, net, pending);
     if (ms.m.size > 40) ms.flush(batch);
     if (detailMs.m.size > 40) detailMs.flush(batch, true);
   }
   ms.flush(batch); detailMs.flush(batch, true);
+  finishHospital(batch, M, world, pending);
   const residential = list.filter((b) => b.type === 'res');
   return { shopSpots, miniMart: shopSpots.find((s) => s.miniMart), residential, list };
 }
@@ -372,46 +373,173 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
 }
 
 // ------------------------------------------------------------------ big buildings
-function buildBlock(B, ms, batch, M, world, R, { h, wall: wallMat, col, roofCol, windows, band, tile = 1.3, floors, glass }) {
+function buildBlock(B, ms, batch, M, world, R, { h, wall: wallMat, col, roofCol, windows, band, tile = 1.3, floors, glass, floorH = 3.5, winW = 1.3, winH = 1.5, winGap = 3, courses = null, pitched = false, plant = false, accent = null }) {
   const P = B.P, s = B.ccw ? 1 : -1;
   let gMin = Infinity, gSum = 0; for (const [x, z] of P) { const g = G(x, z); gMin = Math.min(gMin, g); gSum += g; }
   const gAvg = gSum / P.length, top = gAvg + h, bot = gMin - 0.6;
+  const nf = floors || Math.max(1, Math.floor((h - 1) / floorH));
   let u = 0;
   for (let i = 0; i < P.length; i++) {
     const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 0.05) continue;
     const ex = (b[0] - a[0]) / L, ez = (b[1] - a[1]) / L, n = [ez * s, -ex * s];
     wall(ms, wallMat, col, a, b, bot, top, top, n, tile, u); u += L;
+    const ga = G((a[0] + b[0]) / 2 + n[0] * 2, (a[1] + b[1]) / 2 + n[1] * 2), base = Math.max(ga, gAvg);
     if (windows && L > 3) {
-      const nf = floors || Math.max(1, Math.floor((h - 1) / 3.5));
-      const ga = G((a[0] + b[0]) / 2 + n[0] * 2, (a[1] + b[1]) / 2 + n[1] * 2);
       for (let fl = 0; fl < nf; fl++) {
-        const y0 = Math.max(ga, gAvg) + 0.9 + fl * 3.5; if (y0 + 1.4 > top - 0.3) break;
-        if (band) { const m = 0.8 / L; bandQuad(ms, glass || M.officeGlass, '#ffffff', [a[0] + (b[0] - a[0]) * m, a[1] + (b[1] - a[1]) * m], [b[0] - (b[0] - a[0]) * m, b[1] - (b[1] - a[1]) * m], y0, y0 + 1.5, n); }
-        else { const k = Math.floor(L / 3); for (let j = 0; j < k; j++) { const f = (j + 0.5) / k; if (R() < 0.85) winQuad(ms, M, a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, y0 + 0.75, 1.3, 1.5, n, (R() * 4) | 0); } }
+        const y0 = base + 0.9 + fl * floorH; if (y0 + winH > top - 0.3) break;
+        if (band) { const m = 0.8 / L; bandQuad(ms, glass || M.officeGlass, '#3c4a54', [a[0] + (b[0] - a[0]) * m, a[1] + (b[1] - a[1]) * m], [b[0] - (b[0] - a[0]) * m, b[1] - (b[1] - a[1]) * m], y0, y0 + winH, n); }
+        else { const k = Math.floor(L / winGap); for (let j = 0; j < k; j++) { const f = (j + 0.5) / k; if (R() < 0.92) winQuad(ms, M, a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, y0 + winH / 2, winW, winH, n, (R() * 4) | 0); } }
       }
     }
-    world.addOBB((a[0] + b[0]) / 2 - n[0] * 0.2, (a[1] + b[1]) / 2 - n[1] * 0.2, L / 2 + 0.05, 0.2, Math.atan2(n[0], n[1]), bot - 1.4, top, B.tag || 'building');
+    // stone string courses at each floor (Victorian) / concrete spandrel lines
+    if (courses && L > 1) for (let fl = 1; fl <= nf; fl++) { const y = base + fl * floorH - 0.25; if (y > top - 0.2) break; bandQuad(ms, M.stone, courses, a, b, y, y + 0.22, n, 0.05, 1); }
+    // accent panel strips on modern cladding
+    if (accent && L > 8 && R() < 0.5) { const f = 0.15 + R() * 0.6, w = 2.4 / L; bandQuad(ms, M.cladding, accent, [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], [a[0] + (b[0] - a[0]) * (f + w), a[1] + (b[1] - a[1]) * (f + w)], base + 0.3, top - 0.3, n, 0.06, 3); }
+    world.addOBB((a[0] + b[0]) / 2 - n[0] * 0.2, (a[1] + b[1]) / 2 - n[1] * 0.2, L / 2 + 0.05, 0.2, Math.atan2(n[0], n[1]), bot - 1.4, top + (pitched ? 3 : 0), B.tag || 'building');
   }
-  // flat roof + parapet coping
-  const T = triangulate(P);
-  if (T.length) ms.tris(M.roofFlat, roofCol, P.map(([x, z]) => [x, top, z]), P.map(([x, z]) => [x / 4, z / 4]), T, true);
-  for (let i = 0; i < P.length; i++) {
-    const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 0.3) continue;
-    batch.box(M.stone, (a[0] + b[0]) / 2, top + 0.2, (a[1] + b[1]) / 2, 0.3, 0.4, L + 0.25, { color: '#b8b2a6', ry: Math.atan2(b[0] - a[0], b[1] - a[1]), detail: true });
+  const o = B.o;
+  if (pitched && B.fill > 0.78 && o.hv < 11) {
+    // slate roof over the main rectangle, ridge along the long axis
+    const rise = Math.min(o.hv * 0.75, 4.5), c = [o.cx, o.cz], U = [o.ux * o.hu, o.uz * o.hu], V = [o.vx * (o.hv + 0.25), o.vz * (o.hv + 0.25)];
+    const pt = (su, sv, y) => [c[0] + U[0] * su + V[0] * sv, y, c[1] + U[1] * su + V[1] * sv];
+    for (const sv of [1, -1]) ms.poly(M.slate, '#8f959d', [pt(1, sv, top), pt(-1, sv, top), pt(-1, 0, top + rise), pt(1, 0, top + rise)], [[o.hu / 0.9, 0], [-o.hu / 0.9, 0], [-o.hu / 0.9, rise * 1.4], [o.hu / 0.9, rise * 1.4]], [o.vx * sv, 1, o.vz * sv]);
+    for (const su of [1, -1]) ms.poly(wallMat, col, [pt(su, 1, top), pt(su, -1, top), pt(su, 0, top + rise)], [[0, 0], [2 * o.hv / tile, 0], [o.hv / tile, rise / tile]], [o.ux * su, 0, o.uz * su]);
+    ms.tris(M.roofFlat, roofCol, P.map(([x, z]) => [x, top - 0.02, z]), P.map(([x, z]) => [x / 4, z / 4]), triangulate(P), true);
+  } else {
+    // flat roof + parapet coping
+    const T = triangulate(P);
+    if (T.length) ms.tris(M.roofFlat, roofCol, P.map(([x, z]) => [x, top, z]), P.map(([x, z]) => [x / 4, z / 4]), T, true);
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 0.3) continue;
+      batch.box(M.stone, (a[0] + b[0]) / 2, top + 0.2, (a[1] + b[1]) / 2, 0.3, 0.4, L + 0.25, { color: '#b8b2a6', ry: Math.atan2(b[0] - a[0], b[1] - a[1]), detail: true });
+    }
+    // rooftop plant rooms, flues and air handling units
+    if (plant && B.A > 600) {
+      const k = 1 + Math.min(3, Math.floor(B.A / 1500));
+      for (let j = 0; j < k; j++) {
+        const u0 = (R() - 0.5) * o.hu, v0 = (R() - 0.5) * o.hv * 0.8, x = o.cx + o.ux * u0 + o.vx * v0, z = o.cz + o.uz * u0 + o.vz * v0;
+        const w = 4 + R() * 6, d = 3 + R() * 4, hh = 2.2 + R() * 1.6;
+        batch.box(M.cladding, x, top + hh / 2, z, w, hh, d, { color: '#9aa1a6', tile: 3, ry: Math.atan2(o.ux, o.uz) });
+        for (let f = 0; f < 3; f++) batch.box(M.metal, x + (R() - 0.5) * w, top + hh + 0.6, z + (R() - 0.5) * d, 0.35, 1.2, 0.35, { color: '#b8bcc0', detail: true });
+      }
+    }
   }
-  return { top, gMin };
+  return { top, gMin, base: gAvg };
 }
 
-function buildBig(B, ms, batch, M, world, R) {
+// Blue site signs with the real building names (public buildings).
+let SIGNS = null;
+function hospitalSign(name) {
+  if (!SIGNS) { const c = document.createElement('canvas'); c.width = 1024; c.height = 2048; SIGNS = { c, g: c.getContext('2d'), n: 0, tex: null, idx: new Map() }; }
+  if (SIGNS.idx.has(name)) return SIGNS.idx.get(name);
+  const i = SIGNS.n++, x = (i % 2) * 512, y = Math.floor(i / 2) * 64, g = SIGNS.g;
+  const red = /EMERGENCY/.test(name);
+  g.fillStyle = red ? '#c8102e' : '#005eb8'; g.fillRect(x, y, 512, 64);
+  g.fillStyle = '#fff'; g.font = 'bold 34px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(name, x + 256, y + 33, 490);
+  const cell = { u0: x / 1024, u1: (x + 512) / 1024, v0: 1 - (y + 64) / 2048, v1: 1 - y / 2048 };
+  SIGNS.idx.set(name, cell); return cell;
+}
+export function hospitalSignMaterial() {
+  if (!SIGNS) return null;
+  const t = new THREE.CanvasTexture(SIGNS.c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return new THREE.MeshStandardMaterial({ map: t, roughness: 0.5, vertexColors: true, name: 'hospSign' });
+}
+const HOSP_OLD = /Clock Tower|Coleridge|North House|Estate|Laundry|Vickers|Nurses|Community House|Occupational|Rivermead|Therapy|Unison|Longley/;
+const HOSP_70S = /Huntsman|Firth Building|Chesterman|Brearley|Medical Education|Cystic|Critical Care|Nuclear|Kidney|Hand Centre|Radiology|Laboratory|Spinal/;
+const HOSP_FLOORS = { 'Huntsman Building': 6, 'Chesterman Wing': 6, 'Firth Building': 5, 'Brearley Wing': 4, 'Critical Care Department': 3 };
+function buildHospitalBlock(B, ms, batch, M, world, R, net, pending) {
+  const name = B.b.n || '', hh = B.b.h;
+  const style = HOSP_OLD.test(name) || (!name && B.c[1] < -200 && B.A < 1500) ? 'victorian' : HOSP_70S.test(name) || (!name && B.A > 2500) ? 'seventies' : 'modern';
+  let res;
+  if (style === 'victorian') {
+    const nf = hh ? Math.max(1, Math.round((hh - 1) / 3.7)) : B.A > 1200 ? 3 : 2;
+    res = buildBlock(B, ms, batch, M, world, R, { h: hh || nf * 3.7 + 0.8, floors: nf, floorH: 3.7, wall: M.brick, col: ['#dcb9a6', '#cfae9c', '#e2c2ad'][B.i % 3], roofCol: '#4f5256', windows: true, winW: 1.15, winH: 1.9, winGap: 2.7, courses: '#d8ccb4', pitched: true });
+  } else if (style === 'seventies') {
+    const nf = HOSP_FLOORS[name] || (hh ? Math.max(1, Math.round(hh / 3.8)) : B.A > 2500 ? 5 : 3);
+    res = buildBlock(B, ms, batch, M, world, R, { h: hh || nf * 3.8 + 1, floors: nf, floorH: 3.8, wall: M.render, col: ['#cdc6b6', '#c2bcae', '#d6d0c2'][B.i % 3], roofCol: '#55585c', windows: true, band: true, winH: 1.7, glass: M.officeGlass, courses: '#b3ad9f', plant: true, tile: 2 });
+  } else {
+    const nf = hh ? Math.max(1, Math.round(hh / 3.8)) : B.A > 2000 ? 4 : B.A > 700 ? 3 : 2;
+    res = buildBlock(B, ms, batch, M, world, R, { h: hh || nf * 3.8 + 0.8, floors: nf, floorH: 3.8, wall: M.cladding, col: ['#e9e7e1', '#dde2e4', '#d3dad6'][B.i % 3], roofCol: '#55585c', windows: true, band: true, winH: 1.8, glass: M.officeGlass, plant: true, tile: 3, accent: ['#2f7fb5', '#3a9d8f', '#6aa84f', '#8c5fa8'][B.i % 4] });
+  }
+  // the Clock Tower building: its tower
+  if (/Clock Tower/.test(name)) pending.push({ kind: 'clock', x: B.o.cx, z: B.o.cz, y: res.top, ry: Math.atan2(B.o.ux, B.o.uz) });
+  // name sign on the wall facing the nearest road; A&E at the Huntsman Building
+  if (name && B.A > 300) {
+    let best = null;
+    const P = B.P, s = B.ccw ? 1 : -1;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 6) continue;
+      const n = [(b[1] - a[1]) / L * s, -(b[0] - a[0]) / L * s], m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const r = net.nearest(m[0] + n[0] * 6, m[1] + n[1] * 6, null, (q) => q.kind !== 'f');
+      const d = r ? r.dist : 99; if (!best || d < best.d) best = { d, m, n, L };
+    }
+    if (best) {
+      pending.push({ kind: 'sign', name, x: best.m[0], z: best.m[1], n: best.n, y: G(best.m[0] + best.n[0] * 2, best.m[1] + best.n[1] * 2) + Math.min(res.top - res.base - 1.2, 4.2), w: Math.min(best.L - 2, 7) });
+      if (/Huntsman/.test(name)) pending.push({ kind: 'ae', x: best.m[0], z: best.m[1], n: best.n, y: G(best.m[0] + best.n[0] * 3, best.m[1] + best.n[1] * 3) });
+    }
+  }
+  return res;
+}
+
+// signs, canopies and the clock tower (added once the sign texture exists)
+export function finishHospital(batch, M, world, pending, scene) {
+  if (!pending.length) return;
+  for (const p of pending) if (p.kind === 'ae') hospitalSign('EMERGENCY DEPARTMENT  ·  A&E');
+  for (const p of pending) if (p.kind === 'sign') hospitalSign(p.name);
+  const mat = hospitalSignMaterial();
+  for (const p of pending) {
+    if (p.kind === 'sign' || p.kind === 'ae') {
+      const cell = hospitalSign(p.kind === 'ae' ? 'EMERGENCY DEPARTMENT  ·  A&E' : p.name), ry = Math.atan2(p.n[0], p.n[1]);
+      const f = new Frame(batch, p.x + p.n[0] * 0.08, p.z + p.n[1] * 0.08, ry, p.y);
+      if (p.kind === 'sign') f.geo(mat, atlasQuad(p.w, p.w / 8, cell.u0, cell.v0, cell.u1, cell.v1), 0, 0, 0.02, { color: '#ffffff' });
+      else {
+        // drop-off canopy on columns with the red A&E sign on its fascia
+        const W = 14, D = 6;
+        f.box(M.cladding, 0, 3.6, D / 2, W, 0.4, D, { color: '#e8e8e4', tile: 3 });
+        for (const x of [-W / 2 + 0.4, W / 2 - 0.4]) f.box(M.metal, x, 1.8, D - 0.4, 0.25, 3.6, 0.25, { color: '#c9ccd0' });
+        f.geo(mat, atlasQuad(W - 1, (W - 1) / 8, cell.u0, cell.v0, cell.u1, cell.v1), 0, 3.6, D + 0.02, { color: '#ffffff' });
+        f.box(M.glass, 0, 1.3, 0.08, 4, 2.6, 0.08, { color: '#ffffff' });                       // sliding doors
+        const [cx, cz] = f.world(0, D / 2);
+        for (const x of [-W / 2 + 0.4, W / 2 - 0.4]) { const [wx, wz] = f.world(x, D - 0.4); world.addBox(wx - 0.15, wx + 0.15, p.y - 1, p.y + 3.6, wz - 0.15, wz + 0.15, 'pole'); }
+        void cx; void cz;
+      }
+    } else if (p.kind === 'clock') {
+      // square brick tower rising through the roof: stone quoins, clock faces, pyramid roof, finial
+      const f = new Frame(batch, p.x, p.z, p.ry, p.y - 2), T = 5.2, H = 13;
+      f.box(M.brick, 0, H / 2, 0, T, H, T, { color: '#d9b49e', tile: 1.3 });
+      for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) f.box(M.stone, x * T / 2, H / 2, z * T / 2, 0.5, H, 0.5, { color: '#d8ccb4', tile: 1 });
+      f.box(M.stone, 0, H + 0.2, 0, T + 0.5, 0.4, T + 0.5, { color: '#d8ccb4' });
+      const face = clockTexture();
+      for (const [dx, dz, ry] of [[0, 1, 0], [0, -1, Math.PI], [1, 0, Math.PI / 2], [-1, 0, -Math.PI / 2]]) {
+        f.geo(face, new THREE.CircleGeometry(1.35, 24), dx * (T / 2 + 0.03), H - 2.4, dz * (T / 2 + 0.03), { ry, color: '#ffffff' });
+        f.box(M.stone, dx * (T / 2 + 0.02), H - 2.4, dz * (T / 2 + 0.02), dx ? 0.1 : 3.1, 3.1, dz ? 0.1 : 3.1, { color: '#d8ccb4' });
+      }
+      const roof = new THREE.ConeGeometry(T * 0.78, 5.5, 4, 1).rotateY(Math.PI / 4);
+      f.geo(M.slate, roof, 0, H + 3.15, 0, { color: '#7e858d' });
+      f.box(M.metal, 0, H + 6.5, 0, 0.12, 1.6, 0.12, { color: '#3a3d40' });
+      world.addBox(p.x - T / 2, p.x + T / 2, p.y - 3, p.y + H + 4, p.z - T / 2, p.z + T / 2, 'building');
+    }
+  }
+}
+let CLOCK = null;
+function clockTexture() {
+  if (CLOCK) return CLOCK;
+  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+  g.fillStyle = '#f4f1e8'; g.beginPath(); g.arc(128, 128, 124, 0, 7); g.fill();
+  g.strokeStyle = '#111'; g.lineWidth = 6; g.stroke();
+  g.fillStyle = '#111'; g.font = 'bold 26px serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  ['XII', 'I', 'II', 'III', 'IIII', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'].forEach((t, i) => { const a = i / 12 * Math.PI * 2 - Math.PI / 2; g.fillText(t, 128 + Math.cos(a) * 96, 128 + Math.sin(a) * 96); });
+  g.lineCap = 'round'; g.lineWidth = 9; g.beginPath(); g.moveTo(128, 128); g.lineTo(128 + 50, 128 - 30); g.stroke();
+  g.lineWidth = 6; g.beginPath(); g.moveTo(128, 128); g.lineTo(128 - 10, 128 - 88); g.stroke();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  CLOCK = new THREE.MeshStandardMaterial({ map: t, roughness: 0.4, vertexColors: true });
+  return CLOCK;
+}
+
+function buildBig(B, ms, batch, M, world, R, net, pending) {
   const { b, cls } = B, hash = (B.i * 2654435761) % 1000 / 1000;
   const lv = b.l, hh = b.h;
-  if (cls === 'hospital' || B.type === 'hospital') {
-    const h = hh || (lv ? lv * 3.6 + 0.6 : B.A > 1500 ? 14 : B.A > 400 ? 10.5 : 7);
-    const modern = hash < 0.45;
-    return buildBlock(B, ms, batch, M, world, R, modern
-      ? { h, wall: M.cladding, col: ['#e9e7e1', '#d6dde0', '#c9d3cf'][(hash * 30 | 0) % 3], roofCol: '#55585c', windows: true, band: true, tile: 3 }
-      : { h, wall: M.brick, col: ['#e8c8b4', '#dcb9a6', '#cfae9c'][(hash * 30 | 0) % 3], roofCol: '#4f5256', windows: true });
-  }
+  if (cls === 'hospital' || B.type === 'hospital') return buildHospitalBlock(B, ms, batch, M, world, R, net, pending);
   if (cls === 'school' || cls === 'college' || B.type === 'school') {
     const h = hh || (lv ? lv * 3.8 : 8);
     return buildBlock(B, ms, batch, M, world, R, { h, wall: hash < 0.5 ? M.brick : M.cladding, col: hash < 0.5 ? '#e0bda6' : '#e6e3da', roofCol: '#4a4d52', windows: true, band: true, glass: M.officeGlass });

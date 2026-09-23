@@ -1,0 +1,26 @@
+<!doctype html><html><body style="margin:0;background:#000">
+<script type="importmap">{ "imports": { "three": "../src/lib/three.module.min.js" } }</script>
+<canvas id="c" width="1200" height="600"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { makeSky, SUN_DIR } from '../src/render/sky.js';
+import { buildVehicle } from '../src/models/vehicles.js';
+const r = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+r.toneMapping = THREE.ACESFilmicToneMapping; r.outputColorSpace = THREE.SRGBColorSpace; r.autoClear = false;
+const sky = makeSky(r, { quality: 'low' });
+const scene = new THREE.Scene(); scene.background = sky.background; scene.environment = sky.env;
+const sun = new THREE.DirectionalLight(0xfff0dc, 3); sun.position.copy(SUN_DIR).multiplyScalar(20); scene.add(sun, new THREE.HemisphereLight(0xcfdcf0, 0x6a5e50, 0.35));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x55565a, roughness: 0.9 })); scene.add(ground);
+const types = ['hatch', 'saloon', 'estate', 'suv', 'van', 'bus'], paints = ['#b71c1c', '#1d3f7a', '#e9eaea', '#111214', '#f2f2ef', '#ffffff'];
+const az = +(new URLSearchParams(location.search).get('az') || 0.9);
+types.forEach((t, i) => {
+  const v = buildVehicle(t, { paint: paints[i], plate: i, alloy: i % 4 });
+  scene.clear(); scene.add(sun, ground, new THREE.HemisphereLight(0xcfdcf0, 0x6a5e50, 0.35), v.car);
+  const L = v.dims.L, cam = new THREE.PerspectiveCamera(35, 400 / 300, 0.1, 200);
+  const d = L * 1.5 + 2;
+  cam.position.set(Math.sin(az) * d, 1.6 + L * 0.12, Math.cos(az) * d); cam.lookAt(0, v.dims.H * 0.45, 0);
+  const x = (i % 3) * 400, y = (1 - Math.floor(i / 3)) * 300;
+  r.setViewport(x, y, 400, 300); r.setScissor(x, y, 400, 300); r.setScissorTest(true); r.render(scene, cam);
+});
+window.done = true;
+</script></body></html>

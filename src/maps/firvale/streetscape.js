@@ -4,6 +4,7 @@ import { groundHeight as G } from '../../core/world.js';
 import { Frame, rng } from './buildings.js';
 import { boxUV } from '../../models/shapes.js';
 import { DRIVABLE } from './roads.js';
+import { addParkedVehicle, pickType, PAINT_UK } from '../../models/vehicles.js';
 
 // Street-name plate texture (Sheffield style: black on white, district
 // underneath). One atlas for every named road.
@@ -180,7 +181,7 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
     if (l.k === 'tree1') { trees.push([l.p[0], l.p[1], 1 + R() * 0.3]); continue; }
     const P = []; for (let i = 0; i < l.p.length; i += 2) P.push([l.p[i], l.p[i + 1]]);
     if (l.k === 'tree') scatter(P, 1 / 45, 1.0, trees);
-    else if (l.k === 'wood') scatter(P, 1 / 70, 1.15, woods);
+    else if (l.k === 'wood') scatter(P, 1 / 45, 1.15, woods);
     else if (l.k === 'scrub') scatter(P, 1 / 120, 0.6, woods);
     else if (l.k === 'park' || l.k === 'churchyard') scatter(P, 1 / 700, 1.1, trees);
   }
@@ -200,45 +201,95 @@ function inPoly(P, x, z) {
 
 // ------------------------------------------------------------------ trees
 // Broadleaf street trees: trunk + several lumpy crown blobs.
+// Broadleaf trees: tapered trunk and main limbs in bark, and a crown made of
+// clusters of crossed leaf cards (alpha-cut leaf texture) whose normals point
+// out from the crown centre, so the canopy lights softly like real foliage
+// instead of looking like faceted blobs. Species vary in shape and colour.
+let FOLIAGE = null;
+function foliageMaterial() {
+  if (FOLIAGE) return FOLIAGE;
+  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+  const R = rng(9);
+  for (let i = 0; i < 520; i++) {
+    const a = R() * Math.PI * 2, r = Math.sqrt(R()) * 118, x = 128 + Math.cos(a) * r, y = 128 + Math.sin(a) * r;
+    const l = 22 + R() * 34, h = 80 + R() * 40;
+    g.fillStyle = `hsla(${h},${38 + R() * 25}%,${l}%,1)`;
+    g.save(); g.translate(x, y); g.rotate(R() * Math.PI); g.beginPath(); g.ellipse(0, 0, 3 + R() * 5, 1.6 + R() * 2.4, 0, 0, 7); g.fill(); g.restore();
+  }
+  // a few twigs
+  g.strokeStyle = 'rgba(70,55,40,.9)'; g.lineWidth = 1.5;
+  for (let i = 0; i < 10; i++) { g.beginPath(); g.moveTo(128, 128); g.lineTo(128 + (R() - 0.5) * 200, 128 + (R() - 0.5) * 200); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  FOLIAGE = new THREE.MeshStandardMaterial({ map: t, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.82, metalness: 0, vertexColors: true, name: 'foliage' });
+  return FOLIAGE;
+}
+const SPECIES = [
+  { name: 'plane', h: [9, 14], crown: [4.2, 3.6], trunk: 0.3, tint: ['#6f9446', '#7aa04e', '#62883e'] },
+  { name: 'lime', h: [8, 12], crown: [3.4, 4.2], trunk: 0.26, tint: ['#7da84c', '#86ad55', '#6d9a43'] },
+  { name: 'sycamore', h: [7, 11], crown: [3.8, 3.2], trunk: 0.26, tint: ['#557d34', '#5f8838', '#4b732e'] },
+  { name: 'birch', h: [7, 10], crown: [2.2, 3.4], trunk: 0.14, tint: ['#8fb258', '#99bb60', '#86a852'], bark: '#d9d4c8' },
+  { name: 'oak', h: [8, 12], crown: [4.6, 3.4], trunk: 0.36, tint: ['#51702f', '#5a7a34', '#4a6a2c'] },
+];
+function crossedCards(size) {
+  const geos = [];
+  for (let k = 0; k < 3; k++) { const q = new THREE.PlaneGeometry(size, size); q.rotateY(k * Math.PI / 3); if (k === 2) q.rotateX(Math.PI / 2); geos.push(q); }
+  return geos;
+}
 export function plantTrees(batch, M, world, list, cheap = false) {
-  const R = rng(31);
-  for (const [x, z, s] of list) {
-    if (cheap) { plantCheap(batch, M, world, x, z, s, R); continue; }
-    const g = G(x, z);
+  const R = rng(31), fol = foliageMaterial();
+  const up = new THREE.Vector3(0, 1, 0);
+  for (const [x, z, s0] of list) {
+    const sp = SPECIES[(R() * SPECIES.length) | 0], s = s0 * (cheap ? 0.85 : 1);
+    const g = G(x, z), H = (sp.h[0] + R() * (sp.h[1] - sp.h[0])) * s, cb = H * 0.42;
     const f = new Frame(batch, x, z, R() * 6, g);
-    f.geo(M.bark, boxUV(new THREE.CylinderGeometry(0.16 * s, 0.26 * s, 4.5 * s, 7), 2), 0, 2.25 * s, 0, { color: '#6b5645' });
-    for (let k = 0; k < 5; k++) {
-      const geo = new THREE.IcosahedronGeometry((1.6 + R() * 1.1) * s, k < 1 ? 1 : 0);
-      const p = geo.attributes.position; for (let i = 0; i < p.count; i++) { const n = 0.85 + Math.sin(p.getX(i) * 3 + k) * 0.08 + Math.cos(p.getZ(i) * 4) * 0.07; p.setXYZ(i, p.getX(i) * n, p.getY(i) * n * 0.9, p.getZ(i) * n); }
-      geo.computeVertexNormals();
-      f.geo(M.leaves, geo, (R() - 0.5) * 2.6 * s, (5 + R() * 2.2) * s, (R() - 0.5) * 2.6 * s, { color: ['#4f7d3a', '#5e8a41', '#43702f', '#6b9446'][(R() * 4) | 0] });
+    const barkCol = sp.bark || '#5f5043', tr = sp.trunk * s;
+    f.geo(M.bark, boxUV(new THREE.CylinderGeometry(tr * 0.7, tr, cb + 0.6, 7), 1.5), 0, (cb + 0.6) / 2 - 0.3, 0, { color: barkCol });
+    // main limbs
+    const nl = cheap ? 2 : 4;
+    for (let k = 0; k < nl; k++) {
+      const a = k / nl * Math.PI * 2 + R(), tilt = 0.45 + R() * 0.35, L = H * 0.38;
+      const limb = new THREE.CylinderGeometry(tr * 0.3, tr * 0.6, L, 5); limb.translate(0, L / 2, 0); limb.rotateZ(tilt); limb.rotateY(a);
+      f.geo(M.bark, limb, 0, cb, 0, { color: barkCol, detail: true });
     }
-    world.addBox(x - 0.3 * s, x + 0.3 * s, g - 1, g + 4 * s, z - 0.3 * s, z + 0.3 * s, 'tree');
+    // crown of leaf clusters in an ellipsoid; normals point out from the crown centre
+    const [rx, ry] = sp.crown, crx = rx * s * (0.85 + R() * 0.3), cry = ry * s, cy = cb + cry * 0.95;
+    const n = cheap ? 7 : 14, tint = sp.tint[(R() * sp.tint.length) | 0];
+    const parts = [];
+    for (let k = 0; k < n; k++) {
+      // spread points through the crown volume, biased to the surface
+      const u = R() * 2 - 1, th = R() * Math.PI * 2, rr = 0.55 + 0.45 * Math.sqrt(R());
+      const px = Math.sqrt(1 - u * u) * Math.cos(th) * crx * rr, py = u * cry * rr * 0.85, pz = Math.sqrt(1 - u * u) * Math.sin(th) * crx * rr;
+      const size = (2.4 + R() * 1.4) * s * (cheap ? 1.25 : 1);
+      for (const q of crossedCards(size)) {
+        q.rotateY(R() * Math.PI); q.translate(px, cy + py, pz);
+        const pos = q.attributes.position, nor = q.attributes.normal;
+        for (let i = 0; i < pos.count; i++) { const v = new THREE.Vector3(pos.getX(i), pos.getY(i) - cy * 0.97, pos.getZ(i)).normalize(); nor.setXYZ(i, v.x, v.y + 0.25, v.z); }
+        parts.push(q);
+      }
+    }
+    for (const q of parts) { f.geo(fol, q, 0, 0, 0, { color: tint }); }
+    world.addBox(x - tr, x + tr, g - 1, g + cb, z - tr, z + tr, 'tree');
+    void up;
   }
 }
 
 // --------------------------------------------------------------- parked cars
-// Generic hatchbacks, saloons, estates and vans parked nose-to-tail along
-// the terraced streets. Merged into the static batches (no draw-call cost).
-const PAINT = ['#1b1c1f', '#e8e8e8', '#9aa1a8', '#6b7075', '#1d3f7a', '#7a1d1d', '#2f5d3a', '#c7b27a', '#3a3f55', '#d0d4d6', '#b71c1c', '#0f4c81'];
-export function parkedCar(batch, M, x, z, ry, R) {
-  const kind = R() < 0.14 ? 'van' : (R() < 0.45 ? 'saloon' : 'hatch');
-  const paint = PAINT[(R() * PAINT.length) | 0];
-  const f = new Frame(batch, x, z, ry, G(x, z));
-  const L = kind === 'van' ? 5.0 : kind === 'saloon' ? 4.6 : 4.1, Wd = kind === 'van' ? 1.95 : 1.78;
-  f.box(M.carPaint, 0, 0.62, 0, Wd, 0.62, L, { color: paint });                                         // lower body
-  if (kind === 'van') { f.box(M.carPaint, 0, 1.45, -0.35, Wd - 0.05, 1.1, L - 1.4, { color: paint }); f.box(M.carGlass, 0, 1.5, L / 2 - 1.04, Wd - 0.2, 0.6, 0.06, { color: '#fff', rx: -0.25 }); }
-  else {
-    const cl = kind === 'saloon' ? 2.3 : 2.1, cz = kind === 'saloon' ? -0.1 : -0.35;
-    f.box(M.carPaint, 0, 1.18, cz, Wd - 0.14, 0.5, cl, { color: paint });
-    f.box(M.carGlass, 0, 1.18, cz + cl / 2 + 0.02, Wd - 0.24, 0.42, 0.06, { color: '#fff', rx: -0.5 });
-    f.box(M.carGlass, 0, 1.18, cz - cl / 2 - 0.02, Wd - 0.24, 0.38, 0.06, { color: '#fff', rx: 0.4 });
-    for (const sx of [-1, 1]) f.box(M.carGlass, sx * (Wd / 2 - 0.06), 1.2, cz, 0.04, 0.36, cl - 0.3, { color: '#fff', detail: true });
-  }
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) f.geo(M.tyre, new THREE.CylinderGeometry(0.32, 0.32, 0.24, 8, 1, true).rotateZ(Math.PI / 2), sx * (Wd / 2 - 0.1), 0.32, sz * (L / 2 - 0.8), { color: '#1a1a1a', detail: true });
-  for (const sx of [-0.55, 0.55]) { f.box(M.lampLens, sx, 0.78, L / 2 + 0.01, 0.4, 0.13, 0.03, { color: '#fff5e0', detail: true }); f.box(M.lampLens, sx, 0.82, -L / 2 - 0.01, 0.4, 0.13, 0.03, { color: '#8a0d0d', detail: true }); }
-  f.box(M.plate, 0, 0.5, L / 2 + 0.02, 0.52, 0.11, 0.02, { color: '#f4f4ee', detail: true }); f.box(M.plate, 0, 0.6, -L / 2 - 0.02, 0.52, 0.11, 0.02, { color: '#f2c318', detail: true });
-  return { L, Wd };
+// Everyday cars and vans parked along the terraced streets: the detailed
+// models (see models/vehicles.js) close up, plus a simple two-box proxy
+// (just inside the detailed body) that stays visible further away.
+const PAINT = PAINT_UK;
+let FLEET = null;
+export function setFleet(f) { FLEET = f; }
+export function parkedCar(batch, M, x, z, ry, R, type = pickType(R)) {
+  const paint = PAINT[(R() * PAINT.length) | 0], g = G(x, z);
+  const dims = FLEET ? FLEET.add(x, g, z, ry, type, paint) : addParkedVehicle(batch, x, g, z, ry, type, { paint, plate: (R() * 16) | 0, alloy: (R() * 4) | 0 }, true);
+  const f = new Frame(batch, x, z, ry, g);
+  const L = dims.L * 0.95, Wd = dims.W * 0.94, van = type === 'van';
+  const Ld = L * 0.93, Wp = Wd * 0.94;
+  f.box(M.carPaint, 0, 0.55, 0, Wp, 0.6, Ld, { color: paint });
+  if (van) f.box(M.carPaint, 0, 1.45, -0.3, Wp, 1.1, Ld - 1.4, { color: paint });
+  else f.box(M.carGlass, 0, (dims.H + 0.9) / 2 - 0.08, -0.25, Wp - 0.3, dims.H - 1.05, Ld * 0.42, { color: '#1d252c' });
+  return { L: dims.L, Wd: dims.W };
 }
 
 export function parkCars(batch, M, world, net, keepClear) {
@@ -263,15 +314,51 @@ export function parkCars(batch, M, world, net, keepClear) {
   return n;
 }
 
-// Cheap woodland tree: trunk + two crown blobs (woods have hundreds).
-function plantCheap(batch, M, world, x, z, s, R) {
-  const g = G(x, z);
-  const f = new Frame(batch, x, z, R() * 6, g);
-  const h = (5 + R() * 4) * s;
-  f.geo(M.bark, new THREE.CylinderGeometry(0.14 * s, 0.24 * s, h * 0.6, 5), 0, h * 0.3, 0, { color: '#5e4c3c' });
-  for (let k = 0; k < 2; k++) {
-    const geo = new THREE.IcosahedronGeometry((1.8 + R() * 1.4) * s, 0);
-    f.geo(M.leaves, geo, (R() - 0.5) * 1.5 * s, h * (0.62 + k * 0.22), (R() - 0.5) * 1.5 * s, { color: ['#3f6b30', '#4f7d3a', '#557a36', '#46703a'][(R() * 4) | 0], sy: 1.15 });
+
+// ---------------------------------------------------------------- car parks
+// The real car parks (hospital, shops, schools): marked bays in rows with
+// aisles between, most bays taken.
+export function parkLots(batch, M, world, net, osm, maxCars = 700) {
+  const R = rng(515); let n = 0;
+  const lots = osm.furniture.filter((f) => f.k === 'parking' && f.p.length >= 6).map((f) => flat2(f.p)).filter((P) => Math.abs(area2(P)) > 150);
+  for (const P of lots) {
+    const o = obb2(P); if (!o) continue;
+    // rows run along the long axis; the pattern across it: bay | aisle | bay bay | aisle | ...
+    const along = [o.ux, o.uz], across = [o.vx, o.vz];
+    const rows = []; let v = -o.hv + 2.5, k = 0;
+    while (v < o.hv - 2.3) { rows.push({ v, face: k % 2 ? 1 : -1 }); v += (k % 2 ? 7.4 : 4.9); k++; }
+    for (const row of rows) for (let u = -o.hu + 1.6; u < o.hu - 1.2; u += 2.5) {
+      const x = o.cx + along[0] * u + across[0] * row.v, z = o.cz + along[1] * u + across[1] * row.v;
+      if (!inPoly(P, x, z) || !inPoly(P, x + along[0] * 1.2, z + along[1] * 1.2) || net.onRoadOrPavement(x, z, 0.5)) continue;
+      if (world.near(x, z, 3, _near).some((b) => b.tag === 'building' && inBox(b, x, z, 2.6))) continue;
+      const ry = Math.atan2(across[0] * row.face, across[1] * row.face), g = G(x, z);
+      // bay lines either side
+      for (const du of [-1.25, 1.25]) {
+        const lx = x + along[0] * du, lz = z + along[1] * du;
+        batch.box(M.line, lx, G(lx, lz) + 0.03, lz, 0.1, 0.02, 4.6, { color: '#e9e7df', ry, detail: true });
+      }
+      if (n < maxCars && R() < 0.68) {
+        const { L, Wd } = parkedCar(batch, M, x + (R() - 0.5) * 0.2, z + (R() - 0.5) * 0.2, ry + (R() - 0.5) * 0.06 + (R() < 0.2 ? Math.PI : 0), R);
+        world.addOBB(x, z, Wd / 2, L / 2, ry, g - 0.5, g + 1.45, 'parked-car');
+        n++;
+      }
+    }
   }
-  if (s > 0.8) world.addBox(x - 0.25 * s, x + 0.25 * s, g - 1, g + h * 0.6, z - 0.25 * s, z + 0.25 * s, 'tree');
+  return n;
+}
+function flat2(f) { const P = []; for (let i = 0; i < f.length; i += 2) P.push([f[i], f[i + 1]]); return P; }
+function area2(P) { let a = 0; for (let i = 0, j = P.length - 1; i < P.length; j = i++) a += P[j][0] * P[i][1] - P[i][0] * P[j][1]; return a / 2; }
+function obb2(P) {
+  let best = null;
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], b = P[(i + 1) % P.length]; let ux = b[0] - a[0], uz = b[1] - a[1]; const L = Math.hypot(ux, uz); if (L < 1) continue; ux /= L; uz /= L;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const p of P) { const du = p[0] * ux + p[1] * uz, dv = -p[0] * uz + p[1] * ux; u0 = Math.min(u0, du); u1 = Math.max(u1, du); v0 = Math.min(v0, dv); v1 = Math.max(v1, dv); }
+    const A = (u1 - u0) * (v1 - v0); if (!best || A < best.A) best = { A, ux, uz, u0, u1, v0, v1 };
+  }
+  if (!best) return null;
+  const { ux, uz, u0, u1, v0, v1 } = best, vx = -uz, vz = ux, cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+  let o = { cx: cu * ux + cv * vx, cz: cu * uz + cv * vz, ux, uz, vx, vz, hu: (u1 - u0) / 2, hv: (v1 - v0) / 2 };
+  if (o.hv > o.hu) o = { ...o, ux: vx, uz: vz, vx: -ux, vz: -uz, hu: o.hv, hv: o.hu };
+  return o;
 }

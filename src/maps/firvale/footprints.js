@@ -10,7 +10,7 @@
 // extruded from their footprints with window bands and flat roofs.
 import * as THREE from 'three';
 import { groundHeight as G } from '../../core/world.js';
-import { Frame, rng, atlasQuad } from './buildings.js';
+import { Frame, rng, atlasQuad, DISPLAY } from './buildings.js';
 import { area, centroid, obb, clip, triangulate, Mesher, flatToPts } from './geom.js';
 
 const RES = new Set(['house', 'terrace', 'semidetached_house', 'detached', 'residential', 'apartments', 'bungalow']);
@@ -371,6 +371,14 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     f.box(M.stone, lx, ly + h / 2 + 0.1, D + 0.05, w + 0.3, 0.2, 0.12, { tile: 1, color: '#d6cbb5', detail: true });
     f.box(M.stone, lx, ly - h / 2 - 0.06, D + 0.08, w + 0.24, 0.1, 0.2, { tile: 1, color: '#d6cbb5', detail: true });
   };
+  // ginnel: the covered passage through the terrace to the back yards, on the
+  // party wall between every other pair of houses (dark opening, brick arch)
+  if (!B.modern && !pl.shop && pl.k > 0 && pl.k % 4 === 2 && B.nPlots > 3) {
+    const gx = -W / 2;
+    f.box(M.door, gx, 1.05, D + 0.012, 0.9, 2.1, 0.02, { color: '#0d0d0e' });
+    f.box(M.stone, gx, 2.22, D + 0.05, 1.3, 0.24, 0.1, { color: '#cdbfa6', detail: true });
+    f.box(M.stone, gx, 2.36, D + 0.06, 0.28, 0.2, 0.12, { color: '#d9ccb4', detail: true });          // keystone
+  }
   // gutter + downpipe
   f.box(M.darkMetal, 0, eH - 0.05, D + 0.12, W, 0.12, 0.14, { color: '#1c1c1c', detail: true });
   if (pl.k % 2) f.box(M.darkMetal, W / 2 - 0.08, eH / 2, D + 0.06, 0.08, eH, 0.08, { color: '#1c1c1c', detail: true });
@@ -421,7 +429,8 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     // ---- shopfront: frame, display, door, stall riser, fascia sign, shutter box ----
     const S = pl.shop, cell = signs.cell(S.cell);
     f.box(M.darkMetal, 0, 1.6, D + 0.05, W - 0.3, 3.2, 0.12, { color: '#2a2a2a' });
-    f.geo(M.display, atlasQuad(W - 1.8, 2.2, (S.cell % 4) * 0.25, 0, (S.cell % 4) * 0.25 + 0.25, 1), 0.55, 1.6, D + 0.13);
+    const dv = DISPLAY[S.miniMart ? 'miniMart' : S.cat] ?? 0, du = (dv % 4) * 0.25, dvv = dv < 4 ? 0.5 : 0;
+    f.geo(M.display, atlasQuad(W - 1.8, 2.2, du, dvv, du + 0.25, dvv + 0.5), 0.55, 1.6, D + 0.13);
     f.box(M.glass, -W / 2 + 0.75, 1.25, D + 0.1, 0.95, 2.3, 0.06, { color: '#ffffff' });
     f.box(M.stone, 0, 0.25, D + 0.12, W - 0.3, 0.4, 0.14, { color: '#3a3a3a' });
     f.geo(M.sign, atlasBox(W - 0.2, 0.85, 0.2, cell.u0, cell.v0, cell.u1, cell.v1), 0, 3.6, D + 0.2);

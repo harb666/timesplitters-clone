@@ -115,31 +115,62 @@ export function signAtlas() {
   const cell = (i) => ({ u0: (i % cols) / cols, u1: ((i % cols) + 1) / cols, v1: 1 - Math.floor(i / cols) / rows, v0: 1 - (Math.floor(i / cols) + 1) / rows });
   return { tex: t, cols, rows, count: SHOPS.length, cells, cell };
 }
+// What you see through each kind of shop window: 8 interiors in a 4x2 atlas.
+export const DISPLAY = { grocer: 0, bargain: 0, hardware: 0, fashion: 1, tailor: 1, jeweller: 1, phones: 2, travel: 2, money: 2, bookie: 2,
+  takeaway: 3, kebab: 3, pizza: 3, chicken: 3, grill: 3, cafe: 3, salon: 4, barber: 4, bakery: 5, sweets: 5, pharmacy: 6, dentist: 6, doctor: 6,
+  office: 7, estate: 7, community: 7, furniture: 7, laundry: 4, tolet: 7, miniMart: 0 };
 export function displayAtlas() {
-  const [c, g] = canvas(1024, 256);
+  const [c, g] = canvas(1024, 512);
   const R = rng(5);
-  for (let v = 0; v < 4; v++) {
-    const ox = v * 256;
-    const bg = g.createLinearGradient(0, 0, 0, 256); bg.addColorStop(0, '#2a3238'); bg.addColorStop(1, '#10161a');
-    g.fillStyle = bg; g.fillRect(ox, 0, 256, 256);
-    // shelving with packets, tins, bottles
-    for (let sh = 0; sh < 7; sh++) {
-      const y = 24 + sh * 32; g.fillStyle = '#a49c90'; g.fillRect(ox, y + 22, 256, 3);
-      for (let x = 2; x < 252;) {
-        const w = 3 + R() * 7, h = 8 + R() * 13, hue = R() * 360 | 0;
-        g.fillStyle = `hsl(${hue},${45 + R() * 45 | 0}%,${30 + R() * 35 | 0}%)`; g.fillRect(ox + x, y + 22 - h, w, h);
-        g.fillStyle = 'rgba(255,255,255,.25)'; g.fillRect(ox + x, y + 22 - h, 1, h);
-        x += w + 0.5;
-      }
-    }
-    // window stickers and a poster
-    g.fillStyle = ['#ffd200', '#ff3d3d', '#3ddc84', '#ffffff'][v]; g.fillRect(ox + 10, 150, 60, 40);
-    g.fillStyle = '#111'; g.font = 'bold 14px Arial'; g.fillText(['OPEN', 'SALE', '£1', 'OFFERS'][v], ox + 16, 176);
-    g.fillStyle = 'rgba(255,255,255,.85)'; g.font = 'bold 11px Arial'; g.fillText('WE ACCEPT CARD · TOP UP HERE', ox + 90, 245);
-    // glass reflections
-    g.fillStyle = 'rgba(255,255,255,.14)'; g.beginPath(); g.moveTo(ox + 20, 256); g.lineTo(ox + 120, 0); g.lineTo(ox + 150, 0); g.lineTo(ox + 50, 256); g.fill();
-    g.fillStyle = 'rgba(200,220,255,.08)'; g.fillRect(ox, 0, 256, 60);
-  }
+  const cell = (v) => [(v % 4) * 256, Math.floor(v / 4) * 256];
+  const back = (ox, oy, top, bot) => { const bg = g.createLinearGradient(0, oy, 0, oy + 256); bg.addColorStop(0, top); bg.addColorStop(1, bot); g.fillStyle = bg; g.fillRect(ox, oy, 256, 256); };
+  const light = (ox, oy) => { g.fillStyle = 'rgba(255,250,235,.85)'; for (let x = 20; x < 256; x += 60) g.fillRect(ox + x, oy + 4, 36, 4); };
+  const glassy = (ox, oy) => {
+    g.fillStyle = 'rgba(255,255,255,.13)'; g.beginPath(); g.moveTo(ox + 20, oy + 256); g.lineTo(ox + 120, oy); g.lineTo(ox + 150, oy); g.lineTo(ox + 50, oy + 256); g.fill();
+    g.fillStyle = 'rgba(200,220,255,.07)'; g.fillRect(ox, oy, 256, 60);
+  };
+  const sticker = (ox, oy, txt, bg, fg, x, y, w = 70) => { g.fillStyle = bg; g.fillRect(ox + x, oy + y, w, 26); g.fillStyle = fg; g.font = 'bold 13px Arial'; g.fillText(txt, ox + x + 6, oy + y + 18, w - 10); };
+  // 0 grocer: packed shelves, crates of fruit and veg below
+  { const [ox, oy] = cell(0); back(ox, oy, '#3a4046', '#15191c'); light(ox, oy);
+    for (let sh = 0; sh < 6; sh++) { const y = 20 + sh * 30; g.fillStyle = '#b0a898'; g.fillRect(ox, oy + y + 22, 256, 3);
+      for (let x = 2; x < 252;) { const w = 3 + R() * 7, h = 8 + R() * 13; g.fillStyle = `hsl(${R() * 360 | 0},${45 + R() * 45 | 0}%,${30 + R() * 35 | 0}%)`; g.fillRect(ox + x, oy + y + 22 - h, w, h); x += w + 0.5; } }
+    for (let k = 0; k < 5; k++) { g.fillStyle = '#7a5a3a'; g.fillRect(ox + 8 + k * 50, oy + 206, 44, 46); g.fillStyle = ['#e35d1a', '#4caf50', '#f4d03f', '#c0392b', '#7d3c98'][k]; for (let i = 0; i < 14; i++) { g.beginPath(); g.arc(ox + 14 + k * 50 + R() * 32, oy + 210 + R() * 14, 5, 0, 7); g.fill(); } }
+    sticker(ox, oy, 'OPEN', '#ffd200', '#111', 10, 150, 50); sticker(ox, oy, 'TOP UP HERE', '#1d4fa3', '#fff', 150, 170, 96); glassy(ox, oy); }
+  // 1 fashion: rails of bright clothes, mannequins
+  { const [ox, oy] = cell(1); back(ox, oy, '#f2ece2', '#b9aea0'); light(ox, oy);
+    g.fillStyle = '#888'; g.fillRect(ox + 10, oy + 60, 236, 3);
+    for (let x = 14; x < 244; x += 9) { g.fillStyle = `hsl(${R() * 360 | 0},${50 + R() * 40 | 0}%,${35 + R() * 30 | 0}%)`; g.fillRect(ox + x, oy + 63, 8, 70 + R() * 50); }
+    for (const mx of [50, 200]) { g.fillStyle = `hsl(${R() * 360 | 0},60%,45%)`; g.beginPath(); g.moveTo(ox + mx - 22, oy + 250); g.lineTo(ox + mx - 14, oy + 150); g.lineTo(ox + mx + 14, oy + 150); g.lineTo(ox + mx + 22, oy + 250); g.fill(); g.fillStyle = '#e8dccc'; g.beginPath(); g.arc(ox + mx, oy + 138, 12, 0, 7); g.fill(); }
+    sticker(ox, oy, 'NEW IN', '#9d174d', '#fff', 100, 200, 60); glassy(ox, oy); }
+  // 2 phones / travel / money: bright posters and a counter
+  { const [ox, oy] = cell(2); back(ox, oy, '#e9edf2', '#9aa3ad'); light(ox, oy);
+    for (let k = 0; k < 3; k++) { g.fillStyle = ['#0b6e99', '#e11d48', '#16a34a'][k]; g.fillRect(ox + 12 + k * 82, oy + 30, 70, 100); g.fillStyle = '#fff'; g.font = 'bold 14px Arial'; g.fillText(['SEND', 'UNLOCK', 'FLY'][k], ox + 20 + k * 82, oy + 60); g.fillText(['£0 FEE', 'ANY PHONE', 'CHEAP'][k], ox + 20 + k * 82, oy + 90); }
+    g.fillStyle = '#2b2f36'; g.fillRect(ox, oy + 180, 256, 76); g.fillStyle = '#111'; for (let x = 20; x < 240; x += 28) { g.fillRect(ox + x, oy + 150, 14, 26); } glassy(ox, oy); }
+  // 3 takeaway / cafe: counter, illuminated menu boards, stainless steel
+  { const [ox, oy] = cell(3); back(ox, oy, '#1c1a18', '#2a2622');
+    for (let k = 0; k < 3; k++) { g.fillStyle = '#111'; g.fillRect(ox + 10 + k * 82, oy + 20, 74, 70); g.fillStyle = '#ffde59'; g.font = 'bold 11px Arial'; for (let l = 0; l < 5; l++) g.fillText(['DONER', 'WRAP', 'PIZZA', 'CHIPS', 'PERI'][(k + l) % 5] + '  £' + (3 + R() * 6).toFixed(2), ox + 14 + k * 82, oy + 36 + l * 12, 68); }
+    for (let k = 0; k < 3; k++) { g.fillStyle = `hsl(${20 + R() * 30},70%,45%)`; g.fillRect(ox + 16 + k * 80, oy + 104, 60, 36); }
+    g.fillStyle = '#c9cdd1'; g.fillRect(ox, oy + 150, 256, 106); g.fillStyle = '#9aa0a6'; g.fillRect(ox, oy + 150, 256, 6);
+    sticker(ox, oy, 'HALAL', '#15803d', '#fff', 10, 210, 50); sticker(ox, oy, 'FREE DELIVERY', '#dc2626', '#fff', 120, 210, 110); glassy(ox, oy); }
+  // 4 salon / barber / launderette: mirrors, chairs, posters
+  { const [ox, oy] = cell(4); back(ox, oy, '#f4f1ec', '#cfc7bb'); light(ox, oy);
+    for (let k = 0; k < 3; k++) { g.fillStyle = '#b8c7d2'; g.fillRect(ox + 16 + k * 80, oy + 40, 60, 90); g.fillStyle = '#2b2b2b'; g.fillRect(ox + 26 + k * 80, oy + 150, 40, 50); g.fillRect(ox + 42 + k * 80, oy + 200, 8, 40); }
+    sticker(ox, oy, 'WALK-INS WELCOME', '#111', '#fff', 60, 220, 140); glassy(ox, oy); }
+  // 5 bakery / sweets: glass counters of cakes and bread
+  { const [ox, oy] = cell(5); back(ox, oy, '#fff4e3', '#e2cfb2'); light(ox, oy);
+    for (let sh = 0; sh < 3; sh++) { const y = 70 + sh * 50; g.fillStyle = '#d9c6a6'; g.fillRect(ox, oy + y + 30, 256, 4);
+      for (let x = 6; x < 250; x += 20) { g.fillStyle = sh === 1 ? `hsl(${R() * 60 + 300},70%,${55 + R() * 20}%)` : `hsl(${30 + R() * 15},60%,${45 + R() * 15}%)`; g.beginPath(); g.ellipse(ox + x + 8, oy + y + 22, 9, 7, 0, 0, 7); g.fill(); } }
+    sticker(ox, oy, 'FRESH DAILY', '#92400e', '#fff', 80, 20, 100); glassy(ox, oy); }
+  // 6 pharmacy / dentist / GP: white shelving, green cross, frosting
+  { const [ox, oy] = cell(6); back(ox, oy, '#f7f9fa', '#d7dde0'); light(ox, oy);
+    for (let sh = 0; sh < 5; sh++) { const y = 30 + sh * 36; g.fillStyle = '#c9d1d6'; g.fillRect(ox, oy + y + 26, 256, 3); for (let x = 4; x < 252; x += 10) { g.fillStyle = `hsl(${R() * 360 | 0},40%,${60 + R() * 25 | 0}%)`; g.fillRect(ox + x, oy + y + 10, 8, 16); } }
+    g.fillStyle = 'rgba(255,255,255,.75)'; g.fillRect(ox, oy + 150, 256, 106);
+    g.fillStyle = '#16a34a'; g.fillRect(ox + 110, oy + 170, 36, 12); g.fillRect(ox + 122, oy + 158, 12, 36); glassy(ox, oy); }
+  // 7 office / estate / community / to let: blinds, notices, property cards
+  { const [ox, oy] = cell(7); back(ox, oy, '#dfe3e6', '#a7afb5');
+    g.fillStyle = 'rgba(245,245,240,.9)'; for (let y = 0; y < 150; y += 6) g.fillRect(ox, oy + y, 256, 4);
+    for (let k = 0; k < 6; k++) { g.fillStyle = '#fff'; g.fillRect(ox + 14 + (k % 3) * 80, oy + 160 + Math.floor(k / 3) * 46, 66, 40); g.fillStyle = `hsl(${R() * 360 | 0},30%,55%)`; g.fillRect(ox + 18 + (k % 3) * 80, oy + 164 + Math.floor(k / 3) * 46, 58, 20); }
+    glassy(ox, oy); }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
 }
 

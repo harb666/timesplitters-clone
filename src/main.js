@@ -20,6 +20,7 @@ import { initAudio, updateListener, setVolume, sfx, makeHum, suspendAudio } from
 import { MissionRunner, freeRoam } from './core/missions.js';
 import { makeSky, SUN_DIR } from './render/sky.js';
 import { Crowd } from './entities/crowd.js';
+import { Pigeons } from './entities/pigeons.js';
 
 const QUALITY = {
   low: { dpr: 1, fogNear: 35, fogFar: 140, aa: false, shadows: 0 },
@@ -114,6 +115,7 @@ function boot() {
   // the people of Fir Vale
   const crowd = new Crowd(scene, world, map, hud, { count: settings.quality === 'low' ? 80 : 120 });
   game.crowd = crowd;
+  const pigeons = new Pigeons(scene, map.shopSpots.filter((s, i) => i % 3 === 0).map((s) => [s.front[0], s.front[1]]), settings.quality === 'low' ? 40 : 80);
 
   // ---- game-level helpers used by the weapon ----
   const tmpV = new THREE.Vector3();
@@ -140,7 +142,7 @@ function boot() {
     return best;
   };
   game.addScore = (n, label) => { game.score += n; hud.score(game.score); if (label) hud.toast(`${label} +${n}`); sfx.score(); };
-  game.onGunfire = () => { for (const n of game.npcs) n.onLoudNoise(player.pos.x, player.pos.z); crowd.onLoudNoise(player.pos.x, player.pos.z); };
+  game.onGunfire = () => { for (const n of game.npcs) n.onLoudNoise(player.pos.x, player.pos.z); crowd.onLoudNoise(player.pos.x, player.pos.z); pigeons.scare(player.pos.x, player.pos.z, 45); };
 
   player.onDamage = () => hud.damageFlash();
   player.onDeath = (src) => {
@@ -230,6 +232,7 @@ function boot() {
     for (const c of game.cars) c.update(dt, player);
     map.updateLOD(player.pos, dt);
     crowd.update(dt, player);
+    pigeons.update(dt, player);
     minimap.update(player, game.cars, dez, mission.target());
     for (const n of game.npcs) n.update(dt, player);
     props.update(dt);

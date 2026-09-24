@@ -258,9 +258,9 @@ function loftBody(T, paint) {
   // stations: every boundary (glass edges, pillars, arches) plus an even
   // spread in between, tighter at the rounded ends
   const bnd = [T.gA, T.ws, T.rs, T.gR, T.sg[0], T.sg[1], T.bP - 0.05, T.bP + 0.05, T.quarter ?? -1, (T.quarter ?? -1) + 0.07, 0, 0.02, 0.06, 0.12, L - 0.12, L - 0.06, L - 0.02, L,
-    dF - ra, dF + ra, dR - ra, dR + ra, dF - ra * 0.6, dF + ra * 0.6, dR - ra * 0.6, dR + ra * 0.6, dF, dR].filter((d) => d >= 0 && d <= L);
+    ...[1, 0.97, 0.9, 0.78, 0.6, 0.38, 0.18].flatMap((k) => [dF - ra * k, dF + ra * k, dR - ra * k, dR + ra * k]), dF, dR].filter((d) => d >= 0 && d <= L);
   const st = [...bnd];
-  for (let d = 0.2; d < L; d += 0.2) if (!bnd.some((b) => Math.abs(b - d) < 0.07)) st.push(d);
+  for (let d = 0.2; d < L; d += 0.2) if (!bnd.some((b) => Math.abs(b - d) < 0.07)) st.push(d);   // (arch stations are packed close: the arch edge is a smooth curve)
   const D = st.sort((a, b) => a - b).filter((d, i, a) => i === 0 || d - a[i - 1] > 0.008);
   // section points (x >= 0) for station d
   const NS = 12;
@@ -346,19 +346,35 @@ function loftBody(T, paint) {
     rc.set(new THREE.Vector3(ox, oy, oz), new THREE.Vector3(dx, dy, dz).normalize());
     const h = rc.intersectObject(probeMesh, false)[0]; if (!h) return null;
     const n = h.face.normal.clone(); if (n.dot(rc.ray.direction) > 0) n.negate();
-    return { p: h.point, n };
+    return { p: h.point, n, dir: rc.ray.direction.clone() };
   };
   return { parts: out, probe, top, belt, planW, dF, dR, ra, hL, section };
 }
 
-// a flat piece laid on the body surface at a probe hit (w across, h up)
-function onSurface(hit, w, h, geo = null, off = 0.006) {
-  const g = geo || new THREE.PlaneGeometry(w, h);
+// A piece laid on the body at a probe hit (w across, h up; uv = atlas
+// rect): a fine grid pressed onto the curved panel so nothing sticks out
+// past the bodywork at rounded corners.
+let PROBE = null;
+function onSurface(hit, w, h, uv = null, off = 0.006) {
+  const sx = Math.max(1, Math.min(10, Math.round(w / 0.07))), sy = Math.max(1, Math.min(4, Math.round(h / 0.07)));
+  const g = new THREE.PlaneGeometry(w, h, sx, sy);
+  if (uv) { const a = g.attributes.uv; for (let i = 0; i < a.count; i++) a.setXY(i, uv[0] + a.getX(i) * (uv[2] - uv[0]), uv[1] + a.getY(i) * (uv[3] - uv[1])); }
   const n = hit.n, up = new THREE.Vector3(0, 1, 0);
   const xAxis = new THREE.Vector3().crossVectors(up, n); if (xAxis.lengthSq() < 1e-6) xAxis.set(1, 0, 0); xAxis.normalize();
   const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
-  const m = new THREE.Matrix4().makeBasis(xAxis, yAxis, n); m.setPosition(hit.p.clone().addScaledVector(n, off));
-  g.applyMatrix4(m); return g;
+  const m = new THREE.Matrix4().makeBasis(xAxis, yAxis, n); m.setPosition(hit.p);
+  g.applyMatrix4(m);
+  const P = g.attributes.position, N = g.attributes.normal, v = new THREE.Vector3();
+  for (let i = 0; i < P.count; i++) {
+    v.fromBufferAttribute(P, i);
+    // project straight along the ray that found the spot (like a projector), so it stays in one piece
+    const d = hit.dir || n.clone().negate();
+    const q = PROBE && PROBE(v.x - d.x * 0.6, v.y - d.y * 0.6, v.z - d.z * 0.6, d.x, d.y, d.z);
+    if (q && q.p.distanceTo(v) < 0.45) { v.copy(q.p).addScaledVector(q.n, off); N.setXYZ(i, q.n.x, q.n.y, q.n.z); }
+    else { v.addScaledVector(n, off); N.setXYZ(i, n.x, n.y, n.z); }
+    P.setXYZ(i, v.x, v.y, v.z);
+  }
+  return g;
 }
 
 // Returns { parts: [{ mat, geo, color }], wheels: [{ x, y, z, r, w }], dims }
@@ -367,26 +383,27 @@ export function vehicleParts(type, { paint = '#8e959c', plate = 0, alloy = 0 } =
   const T = MODELS[type] || MODELS.hatch;
   const B = loftBody(T, paint), parts = B.parts, add = (mat, geo, color) => { if (geo) parts.push({ mat, geo, color }); };
   const { L, W, H, r } = T, hL = L / 2, probe = B.probe, trim = '#161719';
+  PROBE = probe;
   const Z = (d) => hL - d;
   // ---- front: headlights, grille, lower intake, plate, fog lights ----
   const yBon = B.top(0.25);
   for (const sx of [-1, 1]) {
     const h = probe(sx * W * 0.33, (yBon + B.top(0.02)) / 2 + 0.03, hL + 2, 0, 0, -1);
-    if (h) { const g = onSurface(h, W * 0.24, T.van ? 0.2 : 0.12, quad(W * 0.24, T.van ? 0.2 : 0.12, sx > 0 ? 0 : 0.5, 0.5, sx > 0 ? 0.5 : 1, 1)); add('lightF', g, '#ffffff'); }
+    if (h) { const g = onSurface(h, W * 0.24, T.van ? 0.2 : 0.12, [sx > 0 ? 0 : 0.5, 0.5, sx > 0 ? 0.5 : 1, 1]); add('lightF', g, '#ffffff'); }
     const fl = probe(sx * W * 0.36, 0.34, hL + 2, 0, 0, -1); if (fl) add('trim', onSurface(fl, 0.14, 0.07), '#2a2c2f');
   }
   const gr = probe(0, B.top(0.02) - 0.05, hL + 2, 0, 0, -1); if (gr) add('trim', onSurface(gr, W * (T.van ? 0.62 : 0.44), T.van ? 0.3 : 0.15), '#0f1011');
-  const li = probe(0, 0.33, hL + 2, 0, 0, -1); if (li) add('trim', onSurface(li, W * 0.56, 0.13), '#141516');
-  const pf = probe(0, 0.47, hL + 2, 0, 0, -1); if (pf) add('plate', onSurface(pf, 0.52, 0.11, quad(0.52, 0.11, ...plateUV(plate, 0)), 0.012), '#ffffff');
+  const li = probe(0, 0.33, hL + 2, 0, 0, -1); if (li) add('trim', onSurface(li, W * 0.48, 0.12), '#141516');
+  const pf = probe(0, 0.47, hL + 2, 0, 0, -1); if (pf) add('plate', onSurface(pf, 0.52, 0.11, plateUV(plate, 0), 0.012), '#ffffff');
   // ---- rear: tail lights, plate, bumper diffuser, high brake light ----
   const yTail = T.van ? 1.05 : Math.min(B.belt(L - 0.2), B.top(L - 0.12)) - 0.06;
   for (const sx of [-1, 1]) {
     const h = probe(sx * W * (T.van ? 0.44 : 0.36), yTail, -hL - 2, 0, 0, 1);
-    if (h) add('lightR', onSurface(h, T.van ? 0.13 : W * 0.22, T.van ? 0.45 : 0.13, quad(T.van ? 0.13 : W * 0.22, T.van ? 0.45 : 0.13, sx > 0 ? 0 : 0.5, 0, sx > 0 ? 0.5 : 1, 0.5)), '#ffffff');
+    if (h) add('lightR', onSurface(h, T.van ? 0.13 : W * 0.22, T.van ? 0.45 : 0.13, [sx > 0 ? 0 : 0.5, 0, sx > 0 ? 0.5 : 1, 0.5]), '#ffffff');
   }
-  const pr = probe(0, T.van ? 0.62 : yTail - 0.3, -hL - 2, 0, 0, 1); if (pr) add('plate', onSurface(pr, 0.52, 0.11, quad(0.52, 0.11, ...plateUV(plate, 1)), 0.012), '#ffffff');
-  const df = probe(0, 0.32, -hL - 2, 0, 0, 1); if (df) add('trim', onSurface(df, W * 0.8, 0.1), trim);
-  if (!T.van) { const hb = probe(0, B.top(T.rs) - 0.04, Z(T.rs) - 1.5, 0, 0.3, 1); if (hb) add('lightR', onSurface(hb, 0.36, 0.03, quad(0.36, 0.03, 0.2, 0.2, 0.3, 0.3)), '#ffffff'); }
+  const pr = probe(0, T.van ? 0.62 : yTail - 0.3, -hL - 2, 0, 0, 1); if (pr) add('plate', onSurface(pr, 0.52, 0.11, plateUV(plate, 1), 0.012), '#ffffff');
+  const df = probe(0, 0.32, -hL - 2, 0, 0, 1); if (df) add('trim', onSurface(df, W * 0.6, 0.08), trim);
+  if (!T.van) { const hb = probe(0, B.top(T.rs) - 0.04, Z(T.rs) - 1.5, 0, 0.3, 1); if (hb) add('lightR', onSurface(hb, 0.36, 0.03, [0.2, 0.2, 0.3, 0.3]), '#ffffff'); }
   if (T.van) {
     const rw = probe(0, 1.5, -hL - 2, 0, 0, 1); if (rw) add('glass', onSurface(rw, 1.4, 0.42), GLASS);
     const rd = probe(0, 1.12, -hL - 2, 0, 0, 1); if (rd) add('trim', onSurface(rd, 0.02, 1.4, null, 0.012), trim);   // rear doors split
@@ -408,20 +425,28 @@ export function vehicleParts(type, { paint = '#8e959c', plate = 0, alloy = 0 } =
       const h = probe(sx * 3, B.belt(d) - 0.12, Z(d), -sx, 0, 0); if (h) add('chrome', onSurface(h, 0.17, 0.03, null, 0.012), T.cladding ? '#9aa0a6' : '#d0d4d8');
     }
     if (T.van) { const h = probe(sx * 3, 1.0, Z(3.1), -sx, 0, 0); if (h && sx > 0) add('trim', onSurface(h, 0.02, 1.3), '#0e0f10'); }   // sliding door rail line (nearside)
-    // mirror on a short arm
-    const hm = probe(sx * 3, B.belt(T.gA + 0.18) + 0.08, Z(T.gA + 0.18), -sx, 0, 0);
+    // door mirror: on the front corner of the door at the beltline, arm out
+    // past the body side, housing with the glass facing back
+    const dm = T.gA + 0.2, hm = probe(sx * 3, B.belt(dm) - 0.04, Z(dm), -sx, 0, 0);
     if (hm) {
-      // door mirror: arm off the door, rounded housing sticking out ~20 cm, glass facing back
-      const mx = hm.p.x + sx * 0.14, my = hm.p.y + 0.03, mz = hm.p.z - 0.04;
-      const hs = new THREE.SphereGeometry(0.5, 8, 5); hs.scale(0.2, 0.13, 0.12);
+      const mx = hm.p.x + sx * 0.17, my = hm.p.y + 0.09, mz = hm.p.z;
+      add('trim', place(new THREE.BoxGeometry(0.16, 0.05, 0.07), hm.p.x + sx * 0.07, hm.p.y + 0.02, mz + 0.02, 0, 0, sx * 0.35), trim);
+      const hs = new THREE.SphereGeometry(0.5, 10, 6); hs.scale(0.2, 0.12, 0.1);
       add('paint', place(hs, mx, my, mz), paint);
-      add('glass', place(quad(0.17, 0.1), mx, my, mz - 0.061, Math.PI), '#aab4bc');
-      add('trim', place(new THREE.BoxGeometry(0.12, 0.05, 0.08), hm.p.x + sx * 0.05, my - 0.04, mz + 0.01), trim);
+      add('glass', place(quad(0.16, 0.09), mx, my, mz - 0.051, Math.PI), '#aab4bc');
     }
   }
   // ---- wheel wells, roof rails ----
   for (const d of [B.dF, B.dR]) add('trim', place(new THREE.BoxGeometry(W - 0.34, B.ra * 1.2, B.ra * 1.9), 0, r + 0.12, Z(d)), '#0a0a0b');
-  if (type === 'estate' || type === 'suv') for (const sx of [-1, 1]) { const zc = Z((T.ws + T.rs) / 2); add('trim', place(new THREE.BoxGeometry(0.035, 0.035, T.rs - T.ws - 0.3), sx * (B.planW(2) * 0.965 - T.tumble - 0.06), B.top((T.ws + T.rs) / 2) - 0.03, zc), '#2a2b2e'); }
+  if (type === 'estate' || type === 'suv') for (const sx of [-1, 1]) {
+    // roof rails: short segments following the roof line, on feet
+    const d0 = T.ws + 0.25, d1 = T.rs - 0.2, n = 5, x = sx * (B.planW(2) * 0.965 - T.tumble - 0.07);
+    for (let k = 0; k < n; k++) {
+      const a = d0 + (d1 - d0) * k / n, b = d0 + (d1 - d0) * (k + 1) / n, ya = B.top(a) + 0.015, yb = B.top(b) + 0.015;
+      add('trim', bar([Z(a), ya], [Z(b), yb], x, 0.03, 0.035), '#2a2b2e');
+    }
+    for (const d of [d0 + 0.05, d1 - 0.05]) add('trim', place(new THREE.BoxGeometry(0.04, 0.05, 0.1), x, B.top(d) - 0.01, Z(d)), '#2a2b2e');
+  }
   const wheels = [];
   const track = W / 2 - 0.15;
   for (const sx of [-1, 1]) for (const d of [B.dF, B.dR]) wheels.push({ x: sx * track, y: r, z: Z(d), r, w: T.van ? 0.23 : r > 0.33 ? 0.23 : 0.2, alloy: T.van ? 0 : alloy });

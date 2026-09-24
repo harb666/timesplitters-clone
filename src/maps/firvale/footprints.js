@@ -396,8 +396,21 @@ function localCCW(piece) { return area(piece) > 0; }
 // Dress the street face of one house (Frame: origin on the front wall,
 // +Z out of the wall, X along the street, y0 = pavement level).
 function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpots) {
-  const W = pl.a1 - pl.a0, am = (pl.a0 + pl.a1) / 2, [fx, fz] = F.toW(am, B.dMax);
-  const f = new Frame(batch, fx, fz, Math.atan2(F.nx, F.nz), pl.gF);
+  const W = pl.a1 - pl.a0, am = (pl.a0 + pl.a1) / 2;
+  // this house's own front wall (real footprints are often set back or a
+  // little skewed from the row): the facade sits exactly on it
+  let dF = B.dMax, phi = 0;
+  { let best = -Infinity; const P = pl.piece;
+    for (let i = 0; i < P.length; i++) {
+      const A = P[i], Bq = P[(i + 1) % P.length], lo = Math.min(A[0], Bq[0]), hi = Math.max(A[0], Bq[0]);
+      if (hi - lo < 1e-4 || am < lo || am > hi) continue;
+      const d = A[1] + (Bq[1] - A[1]) * (am - A[0]) / (Bq[0] - A[0]);
+      if (d > best) { best = d; let ea = Bq[0] - A[0], ed = Bq[1] - A[1]; if (ea < 0) { ea = -ea; ed = -ed; } phi = Math.atan2(ed, ea); }
+    }
+    if (best > -Infinity) dF = best;
+    if (Math.abs(phi) > 0.5) phi = 0; }
+  const [fx, fz] = F.toW(am, dF), c = Math.cos(phi), sn = Math.sin(phi);
+  const f = new Frame(batch, fx, fz, Math.atan2(F.nx * c - F.tx * sn, F.nz * c - F.tz * sn), pl.gF);
   const m = pl.mirror ? -1 : 1, v = (R() * 4) | 0, D = 0;
   const eH = eave - pl.gF;
   const win = (lx, ly, w, h, vv) => {
@@ -473,7 +486,7 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     const S = pl.shop;
     shopFront(f, W, S, M, signs, R, D);
     upper(4.9 - (eH < 6.3 ? 0.4 : 0)); if (B.storeys >= 3) upper(4.9 + FLOOR);
-    shopSpots.push({ x: fx, z: fz, ry: Math.atan2(F.nx, F.nz), front: F.toW(am, B.dMax + 1.8), cat: S.cat, sign: S.cell, miniMart: !!S.miniMart, gF: pl.gF });
+    shopSpots.push({ x: fx, z: fz, ry: f.ry, front: f.world(0, 1.8), cat: S.cat, sign: S.cell, miniMart: !!S.miniMart, gF: pl.gF });
   }
 }
 

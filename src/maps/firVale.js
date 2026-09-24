@@ -84,6 +84,8 @@ function makeMaterials(quality) {
   for (const k of ['ridge', 'clay', 'door', 'plastic', 'hedge', 'fabric', 'fruit', 'panel', 'louvre', 'postbox', 'cabinet', 'leaves', 'tyre', 'plate', 'line']) M[k] = matte;
   for (const k of ['darkMetal', 'metal', 'galv', 'dish']) M[k] = metal;
   for (const k of ['glass', 'officeGlass', 'carGlass', 'lampLens', 'signalLens', 'lampHead', 'carPaint']) M[k] = gloss;
+  // tarmac footways: the same asphalt, but worn paler and finer than the carriageway
+  M.paveTar = M.road.clone(); M.paveTar.color.setRGB(1.3, 1.28, 1.24); M.paveTar.normalScale = new THREE.Vector2(0.45, 0.45);
   for (const k in M) if (!M[k].name) M[k].name = k;
   M.kerb = M.stone; M.ashlar = M.stone; M.tile = M.slate; M.bark = M.wood; M.roadFlat = M.road;
   return { M, signs };

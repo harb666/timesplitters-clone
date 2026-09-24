@@ -183,7 +183,7 @@ export class RoadNetwork {
       if (r.pave > 0) for (const side of [1, -1]) {
         const inner = side > 0 ? r.half : -r.half - r.pave, outer = side > 0 ? r.half + r.pave : -r.half;
         const keep = (x, z) => !this.onCarriageway(x, z, r, 0.3);
-        this.ribbon(batch, M.pave, r, inner, outer, 0.15, 1.8, r.kind === 'r' ? '#8e8e8e' : '#ffffff', keep, r.kind === 'r' ? M.road : null);
+        this.ribbon(batch, M.pave, r, inner, outer, 0.15, 1.8, '#ffffff', keep, r.kind === 'r' ? (M.paveTar || M.road) : null);
         this.kerb(batch, M.kerb, r, side, keep);
       }
       if (r.kind !== 's') this.markings(batch, M.line, r);
@@ -242,7 +242,7 @@ export class RoadNetwork {
       const x = (a.x + b.x) / 2 + a.tz * o, z = (a.z + b.z) / 2 - a.tx * o;
       if (keep && !keep(x, z)) continue;
       const ax = a.x + a.tz * o, az = a.z - a.tx * o, bx = b.x + b.tz * o, bz = b.z - b.tx * o, ga = G(ax, az), gb = G(bx, bz);
-      batch.sloped(mat, ax, az, bx, bz, 0.22, ga - 0.09, gb - 0.09, ga + 0.21, gb + 0.21, { color: '#c9c4b8', tile: 1 });
+      batch.sloped(mat, ax, az, bx, bz, 0.22, ga - 0.09, gb - 0.09, ga + 0.21, gb + 0.21, { color: '#b9b7b1', tile: 1 });
     }
   }
 

@@ -34,6 +34,12 @@ for (const [name, v] of views) {
       const kind = v.person, q = g.crowd.people.filter((o) => o.kind === kind)[v.i || 0];
       const a = q.yawS + (v.ang || 0), x = q.x + Math.sin(a) * (v.d || 4), z = q.z + Math.cos(a) * (v.d || 4);
       p.spawn(x, z, Math.atan2(x - q.x, z - q.z));
+    } else if (v && v.sign) {
+      // look at the street name plate at the start of a road, from its front (+1) or back (-1)
+      const net = g.map.net, r = net.longest(v.sign), q = net.pointAt(r, 7, r.half + r.pave - 0.3, {});
+      const ry = Math.atan2(q.tx, q.tz) + Math.PI / 2, nx = Math.sin(ry), nz = Math.cos(ry), side = v.side ?? 1;
+      const x = q.x + nx * 3.2 * side, z = q.z + nz * 3.2 * side;
+      p.spawn(x, z, Math.atan2(x - q.x, z - q.z));
     } else if (v && v.xing) {
       const net = g.map.net, n = net.nearest(v.xing[0], v.xing[1], null, (r) => r.kind !== 'f');
       const q = net.pointAt(n.road, n.s - (v.d ?? 14), v.off ?? (n.road.half + 1.2), {}), c = net.pointAt(n.road, n.s, 0, {});

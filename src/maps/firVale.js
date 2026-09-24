@@ -14,7 +14,8 @@ import OSM from './firvale/osm.js';
 import { PLACES } from './firvale/data.js';
 import { RoadNetwork, DRIVABLE } from './firvale/roads.js';
 import { windowAtlas, signAtlas, displayAtlas, Frame, rng } from './firvale/buildings.js';
-import { buildFootprints } from './firvale/footprints.js';
+import { buildFootprints, houseDetail, homeChunk } from './firvale/footprints.js';
+import { CHUNK } from '../models/builders.js';
 import { buildChurch } from './firvale/landmarks.js';
 import { buildStreetscape, plantTrees, parkCars, parkLots, setFleet } from './firvale/streetscape.js';
 import { ParkedFleet } from '../models/vehicles.js';
@@ -99,6 +100,15 @@ function signTexture(lines, bg, fg, w = 512, h = 256) {
   });
 }
 
+// view ranges (m): far = everything (haze by then), load/show = full house
+// detail (built well before it's shown), detail = small pieces, budget = ms a
+// frame spent building streamed detail
+const RANGES = {
+  low: { far: 420, load: 420, show: 400, detail: 400, budget: 4 },
+  medium: { far: 620, load: 560, show: 540, detail: 560, budget: 6 },
+  high: { far: 800, load: 700, show: 680, detail: 700, budget: 8 },
+};
+
 export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3, sunDir = new THREE.Vector3(0.45, 0.6, 0.3) } = {}) {
   const t0 = performance.now();
   const { M, signs } = makeMaterials(quality);
@@ -122,7 +132,8 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
 
   // ---- buildings from the real footprints ----
   const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffa020 });
-  const fp = buildFootprints(batch, M, world, net, OSM, { signs, shopCells: signs.cells, special, miniMartAt: PLACES.miniMart });
+  const shell = new StaticBatch();          // far version of every house (walls, roofs, windows, stacks)
+  const fp = buildFootprints(batch, M, world, net, OSM, { signs, shopCells: signs.cells, special, miniMartAt: PLACES.miniMart, shell });
 
   // ---- ground: real terrain + land-cover mask ----
   const mask = landMask(OSM, fp.residential, fp.list);
@@ -152,7 +163,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   const nearJunction = (x, z, r) => junctions.some(([jx, jz]) => (jx - x) ** 2 + (jz - z) ** 2 < r * r);
   const busStops = OSM.furniture.filter((f) => f.k === 'bus').map((f) => f.p);
   const keepClear = (x, z) => nearJunction(x, z, 11) || Math.hypot(x - PLACES.miniMart[0], z - PLACES.miniMart[1]) < 22 || busStops.some(([bx, bz]) => (bx - x) ** 2 + (bz - z) ** 2 < 144) || world.near(x, z, 1, []).some((b) => b.tag !== 'edge' && b.tag !== 'building' && b.tag !== 'lamp' && Math.hypot(((b.minX + b.maxX) / 2) - x, ((b.minZ + b.maxZ) / 2) - z) < 2.5);
-  const fleet = new ParkedFleet(scene, { range: quality === 'low' ? 45 : quality === 'high' ? 95 : 60 });
+  const fleet = new ParkedFleet(scene, { range: quality === 'low' ? 120 : quality === 'high' ? 260 : 200 });
   setFleet(fleet);
   const parked = parkCars(batch, M, world, net, keepClear) + parkLots(batch, M, world, net, OSM, quality === 'low' ? 300 : 700);
 
@@ -219,25 +230,67 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
 
   fleet.build(); setFleet(null);
   const meshes = batch.build(scene);
-  for (const m of meshes) { m.castShadow = !m.userData.detail && m.material !== gmat; m.receiveShadow = true; m.geometry.computeBoundingSphere(); }
+  for (const m of meshes) { m.castShadow = !m.userData.detail && m.material !== gmat; m.receiveShadow = true; }
+  const shellMeshes = shell.build(scene), shellByChunk = new Map();
+  for (const m of shellMeshes) { m.receiveShadow = true; (shellByChunk.get(m.userData.chunk) || shellByChunk.set(m.userData.chunk, []).get(m.userData.chunk)).push(m); }
 
-  // distance culling: hide far chunks (fog hides them anyway) and far detail
-  const detailRange = quality === 'low' ? 45 : quality === 'high' ? 110 : 75, farRange = quality === 'low' ? 150 : quality === 'high' ? 230 : 195;
-  let lodT = 0, lx = 1e9, lz = 1e9;
-  function updateLOD(pos, dt = 1) {
-    lodT -= dt;
-    const jumped = Math.hypot(pos.x - lx, pos.z - lz) > 15; // teleport/respawn: refresh now
-    if (lodT > 0 && !jumped) return;
-    lodT = 0.25; lx = pos.x; lz = pos.z;
-    fleet.update(pos);
-    for (const m of meshes) {
-      const c = m.userData.wc; if (!c) continue;
-      const d = Math.hypot(c.x - pos.x, c.z - pos.z) - m.userData.wr * 0.55;
-      m.visible = d < (m.userData.detail ? detailRange : m.material === gmat ? farRange + 150 : farRange);
-      if (!m.userData.detail && m.material !== gmat) m.castShadow = d < 45; // only nearby chunks draw into the shadow map
+  // ---- streaming: full house detail is built round the player, a few houses
+  // a frame, well before it comes into view; further out the light far
+  // version stands in (and the haze hides the swap) ----
+  const R = RANGES[quality] || RANGES.medium;
+  const houseChunks = new Map();
+  for (const B of fp.list) if (B.type === 'res') { const k = homeChunk(B).join(','); (houseChunks.get(k) || houseChunks.set(k, []).get(k)).push(B); }
+  const chunks = new Map();                 // key -> { list, i, batch, meshes, ready }
+  const rectDist = (k, pos) => { const [cx, cz] = k.split(',').map(Number), x0 = cx * CHUNK, z0 = cz * CHUNK; const dx = Math.max(x0 - pos.x, 0, pos.x - x0 - CHUNK), dz = Math.max(z0 - pos.z, 0, pos.z - z0 - CHUNK); return Math.hypot(dx, dz); };
+  function stream(pos, budgetMs) {
+    for (const k of houseChunks.keys()) if (!chunks.has(k) && rectDist(k, pos) < R.load) chunks.set(k, { list: houseChunks.get(k), i: 0, batch: null, meshes: null, ready: false });
+    for (const [k, c] of chunks) if (rectDist(k, pos) > R.load + 90) {
+      if (c.meshes) for (const m of c.meshes) { scene.remove(m); m.geometry.dispose(); }
+      chunks.delete(k);
+    }
+    const t0 = performance.now();
+    while (performance.now() - t0 < budgetMs) {
+      let job = null, bd = Infinity;
+      for (const [k, c] of chunks) if (!c.ready) { const d = rectDist(k, pos); if (d < bd) { bd = d; job = c; } }
+      if (!job) break;
+      if (!job.batch) job.batch = new StaticBatch();
+      world.muted = true;
+      try { houseDetail(job.list[job.i++], job.batch, M, world, net, signs); } finally { world.muted = false; }
+      if (job.i >= job.list.length) {
+        job.meshes = job.batch.build(scene); job.batch = null; job.ready = true;
+        for (const m of job.meshes) { m.receiveShadow = true; m.visible = false; }
+        lodT = 0;                           // show it now
+      }
     }
   }
 
+  // distance culling: haze hides what's far; small detail only up close
+  let lodT = 0, lx = 1e9, lz = 1e9;
+  let lyaw = 0;
+  function updateLOD(pos, dt = 1, yaw = null) {
+    stream(pos, R.budget);
+    lodT -= dt;
+    const jumped = Math.hypot(pos.x - lx, pos.z - lz) > 15; // teleport/respawn: refresh now
+    const turned = yaw !== null && Math.abs(Math.atan2(Math.sin(yaw - lyaw), Math.cos(yaw - lyaw))) > 0.35;   // (refresh the cars when you turn)
+    if (lodT > 0 && !jumped && !turned) return;
+    if (yaw !== null) lyaw = yaw;
+    if (jumped) stream(pos, Infinity);
+    lodT = 0.25; lx = pos.x; lz = pos.z;
+    fleet.update(pos, yaw);
+    const vis = (m, far) => {
+      const c = m.userData.wc; if (!c) return;
+      const d = Math.hypot(c.x - pos.x, c.z - pos.z) - m.userData.wr * 0.55;
+      // everything is drawn out to the haze (only what's behind you is skipped, by the camera)
+      m.visible = d < (m.userData.detail ? R.detail : m.material === gmat ? far + 150 : far);
+      if (!m.userData.detail && m.material !== gmat) m.castShadow = d < 45; // only nearby chunks draw into the shadow map
+    };
+    for (const m of meshes) vis(m, R.far);
+    for (const [k, list] of shellByChunk) {
+      const c = chunks.get(k), near = c && c.ready && rectDist(k, pos) < R.show;
+      for (const m of list) { if (near) m.visible = false; else vis(m, R.far); }
+      if (c && c.ready) for (const m of c.meshes) { if (near) vis(m, R.far); else m.visible = false; }
+    }
+  }
   const surfaceAt = (x, z) => {
     const s = net.surfaceAt(x, z); if (s) return s;
     const px = Math.floor(x - mask.x0), pz = Math.floor(z - mask.z0);
@@ -258,6 +311,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   const spR = mmN ? mmN.road : phr;
   const sp = net.pointAt(spR, (mmN ? mmN.s : spR.length * 0.4) - 6, (mmN ? mmN.side : 1) * (spR.half + spR.pave * 0.5), {});
   const spawn = { x: sp.x, z: sp.z, yaw: Math.atan2(-sp.tx, -sp.tz) + Math.PI };
+  stream(spawn, Infinity);                 // full detail round the start before the first frame
   const dezPath = []; for (let k = 0.1; k <= 0.9; k += 0.05) { const p = net.pointAt(phr, phr.length * k, -(mmN ? mmN.side : 1) * (phr.half + phr.pave * 0.55), {}); dezPath.push([p.x, p.z]); }
 
   console.log(`Fir Vale built in ${Math.round(performance.now() - t0)} ms: ${meshes.length} meshes, ${world.boxes.length} colliders, ${parked} parked cars, ${fp.shopSpots.length} shops, ${fp.list.length} buildings`);

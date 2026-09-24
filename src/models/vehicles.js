@@ -600,7 +600,7 @@ export class ParkedFleet {
       for (const p of V.parts) { if (!byMat.has(p.mat)) byMat.set(p.mat, []); byMat.get(p.mat).push(colorize(p.geo, p.color)); }
       for (const w of V.wheels) { const { tyre, face } = wheelParts(w, 0.7 * v); if (!byMat.has('tyre')) byMat.set('tyre', []); if (!byMat.has('rim')) byMat.set('rim', []); byMat.get('tyre').push(colorize(tyre, '#1c1c1c')); byMat.get('rim').push(colorize(face, '#ffffff')); }
       const meshes = [];
-      const cap = Math.min(n, 160);
+      const cap = Math.min(n, 600);
       for (const [k, list] of byMat) {
         const mesh = new THREE.InstancedMesh(mergeList(list), M[k], cap);
         mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = k === 'paint' || k === 'trim'; mesh.receiveShadow = true;
@@ -611,13 +611,16 @@ export class ParkedFleet {
     }
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3(1, 1, 1); this._up = new THREE.Vector3(0, 1, 0);
   }
-  update(pos) {
-    const R2 = this.range * this.range;
+  // yaw: the player's view direction; cars well behind the view aren't drawn
+  // (anything within 15 m always is, for turning round)
+  update(pos, yaw = null) {
+    const R2 = this.range * this.range, fx = yaw === null ? 0 : -Math.sin(yaw), fz = yaw === null ? 0 : -Math.cos(yaw);
     for (const m of this.models.values()) {
       let n = 0;
       for (const c of m.members) {
         if (n >= m.cap) break;
-        const dx = c.x - pos.x, dz = c.z - pos.z; if (dx * dx + dz * dz > R2) continue;
+        const dx = c.x - pos.x, dz = c.z - pos.z, d2 = dx * dx + dz * dz; if (d2 > R2) continue;
+        if (yaw !== null && d2 > 225 && dx * fx + dz * fz < -0.35 * Math.sqrt(d2)) continue;
         this._q.setFromAxisAngle(this._up, c.ry); this._m.compose(this._p.set(c.x, c.y, c.z), this._q, this._s);
         for (const { k, mesh } of m.meshes) { mesh.setMatrixAt(n, this._m); if (k === 'paint') mesh.setColorAt(n, c.paint); }
         n++;

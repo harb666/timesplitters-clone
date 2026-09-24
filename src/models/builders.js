@@ -121,9 +121,13 @@ export class StaticBatch {
   // added (16-bit positions relative to the chunk centre, byte normals,
   // half-float UVs, 16-bit tints, 16-bit indices, <=65535 vertices a part),
   // so building the town never holds thousands of loose geometries in memory.
-  constructor() { this.groups = new Map(); this.parts = []; }
+  // discard: build nothing (collider/data pass); force: [cx, cz] puts every
+  // piece in that chunk (so a whole house lives in its home chunk)
+  constructor({ discard = false } = {}) { this.groups = new Map(); this.parts = []; this.discard = discard; this.force = null; }
 
   add(material, geometry, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color, detail = false, chunk } = {}) {
+    if (this.discard) { geometry.dispose(); return this; }
+    if (this.force) chunk = this.force;
     if (x || y || z || rx || ry || rz || sx !== 1 || sy !== 1 || sz !== 1) {
       _e.set(rx, ry, rz); _q.setFromEuler(_e);
       _m.compose(_p.set(x, y, z), _q, _s.set(sx, sy, sz));
@@ -171,6 +175,7 @@ export class StaticBatch {
 
   // Box by its centre position.
   box(material, x, y, z, w, h, d, { color, tile = 0, ry = 0, rx = 0, rz = 0, detail = false } = {}) {
+    if (this.discard) return;
     this.add(material, tiledBox(w, h, d, tile), { x, y, z, rx, ry, rz, color, detail });
   }
 
@@ -178,6 +183,7 @@ export class StaticBatch {
   // edges slope independently (b0/b1, t0/t1 = heights at each end): walls,
   // copings and kerbs that follow the ground instead of stepping.
   sloped(material, x0, z0, x1, z1, t, b0, b1, t0, t1, { color, tile = 0, detail = false } = {}) {
+    if (this.discard) return;
     const L = Math.hypot(x1 - x0, z1 - z0); if (L < 1e-3) return;
     const g = tiledBox(t, ((t0 - b0) + (t1 - b1)) / 2, L, tile, 8), P = g.attributes.position;   // (no underside: always buried)
     const ux = (x1 - x0) / L, uz = (z1 - z0) / L;
@@ -207,7 +213,7 @@ export class StaticBatch {
       const mesh = new THREE.Mesh(geo, grp.material);
       mesh.position.set((grp.cx + 0.5) * CHUNK, 0, (grp.cz + 0.5) * CHUNK); mesh.scale.setScalar(QS);
       mesh.updateMatrix(); mesh.matrixAutoUpdate = false;
-      mesh.userData.detail = grp.detail;
+      mesh.userData.detail = grp.detail; mesh.userData.chunk = grp.cx + ',' + grp.cz;
       const bs = geo.boundingSphere; mesh.userData.wc = bs.center.clone().multiplyScalar(QS).add(mesh.position); mesh.userData.wr = bs.radius * QS;
       parent.add(mesh); meshes.push(mesh);
     }

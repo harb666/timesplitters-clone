@@ -39,6 +39,7 @@ export class World {
 
   // Axis-aligned box.
   addBox(minX, maxX, minY, maxY, minZ, maxZ, tag = 'static', owner = null) {
+    if (this.muted) return { minX, maxX, minY, maxY, minZ, maxZ, tag };        // (re-building detail that already has its colliders)
     const b = { minX, maxX, minY, maxY, minZ, maxZ, tag, owner, rot: 0 };
     this.boxes.push(b); this._insert(b);
     return b;
@@ -47,6 +48,7 @@ export class World {
   // Box of half-size (hw, hd) centred at (cx, cz) rotated by `ry` (radians,
   // same convention as Object3D.rotation.y).
   addOBB(cx, cz, hw, hd, ry, minY, maxY, tag = 'static', owner = null) {
+    if (this.muted) return { cx, cz, hw, hd, minY, maxY, tag };
     const c = Math.cos(ry), s = Math.sin(ry);
     const ex = Math.abs(c) * hw + Math.abs(s) * hd, ez = Math.abs(s) * hw + Math.abs(c) * hd;
     const b = { minX: cx - ex, maxX: cx + ex, minY, maxY, minZ: cz - ez, maxZ: cz + ez, tag, owner, rot: ry, cx, cz, hw, hd, c, s };
@@ -116,7 +118,7 @@ export class World {
   }
 
   // Ray vs boxes: nearest hit within maxDist.
-  raycastBoxes(ox, oy, oz, dx, dy, dz, maxDist) {
+  raycastBoxes(ox, oy, oz, dx, dy, dz, maxDist, accept = null) {
     let best = maxDist, bestBox = null, bestN = null;
     // gather candidates along the ray from the grid
     const cand = this._rc || (this._rc = []); cand.length = 0; const qid = (this._qid = (this._qid || 0) + 1);
@@ -131,6 +133,7 @@ export class World {
     }
     for (const b of this.dynamic) cand.push(b);
     for (const b of cand) {
+      if (accept && !accept(b)) continue;
       let o = [ox, oy, oz], d = [dx, dy, dz], mn, mx;
       if (b.rot) {
         const [lx, lz] = World.local(b, ox, oz);

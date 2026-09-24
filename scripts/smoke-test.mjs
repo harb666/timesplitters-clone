@@ -23,11 +23,11 @@ page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
 
 await page.goto('http://localhost:8765/index.html?sky=128');
 await page.waitForFunction(() => !document.getElementById('btn-start').disabled, null, { timeout: 180000 });
-await page.screenshot({ path: path.join(outDir, '01-title.png') });
+await page.screenshot({ path: path.join(outDir, '01-title.png'), timeout: 180000 });
 await page.tap('#btn-start');
 await page.waitForFunction(() => window.__firvale.running, null, { timeout: 60000 });
 await page.waitForTimeout(1500);
-await page.screenshot({ path: path.join(outDir, '02-start.png') });
+await page.screenshot({ path: path.join(outDir, '02-start.png'), timeout: 180000 });
 
 const snap = () => page.evaluate(() => { const g = window.__firvale; return { pos: g.player.pos.toArray().map((v) => +v.toFixed(2)), hp: g.player.health, ammo: g.arsenal.ammo, weapon: g.arsenal.name, state: g.arsenal.current.state, score: g.score, fps: g.fps, dez: [+g.dez.x.toFixed(1), +g.dez.z.toFixed(1), g.dez.state], car: [+g.cars[0].z.toFixed(1), +g.cars[0].speed.toFixed(1), g.cars[0].gear] }; });
 console.log('start', await snap());
@@ -49,7 +49,7 @@ await touch('touchEnd', []);
 // Fire three times, then reload.
 const fb = await page.locator('#btn-fire').boundingBox();
 for (let i = 0; i < 3; i++) { await touch('touchStart', [{ x: fb.x + fb.width / 2, y: fb.y + fb.height / 2, id: 3 }]); await page.waitForTimeout(80); await touch('touchEnd', []); await page.waitForTimeout(600); }
-await page.screenshot({ path: path.join(outDir, '03-shooting.png') });
+await page.screenshot({ path: path.join(outDir, '03-shooting.png'), timeout: 180000 });
 console.log('after shots', await snap());
 const rb = await page.locator('#btn-reload').boundingBox();
 await touch('touchStart', [{ x: rb.x + rb.width / 2, y: rb.y + rb.height / 2, id: 4 }]); await page.waitForTimeout(60); await touch('touchEnd', []);
@@ -62,13 +62,13 @@ console.log('after reload', await snap());
 const view = async (name, x, z, yaw, pitch = 0) => {
   await page.evaluate(([x, z, yaw, pitch]) => { const g = window.__firvale; g.player.spawn(x, z, yaw); g.player.pitch = pitch; }, [x, z, yaw, pitch]);
   await page.waitForTimeout(900);
-  await page.screenshot({ path: path.join(outDir, name) });
+  await page.screenshot({ path: path.join(outDir, name), timeout: 180000 });
 };
 // Real streets (positions relative to the road data)
 const roadView = async (name, road, i, frac, off, turn = 0) => {
   await page.evaluate(([road, i, frac, off, turn]) => { const g = window.__firvale, r = g.map.net.longest(road), p = g.map.net.pointAt(r, r.length * frac, off * (r.half + 1.4), {}); g.player.spawn(p.x, p.z, Math.atan2(-p.tx, -p.tz) + turn); }, [road, i, frac, off, turn]);
   await page.waitForTimeout(900);
-  await page.screenshot({ path: path.join(outDir, name) });
+  await page.screenshot({ path: path.join(outDir, name), timeout: 180000 });
 };
 await roadView('04-page-hall-road.png', 'Page Hall Road', 0, 0.55, -1);
 await roadView('05-junction.png', 'Firth Park Road', 0, 0.06, 1, 0.3);
@@ -76,7 +76,7 @@ await roadView('06-hinde-house-lane.png', 'Hinde House Lane', 0, 0.3, -1);
 await roadView('07-owler-lane.png', 'Owler Lane', 0, 0.3, 1, -0.3);
 await roadView('08-barnsley-road.png', 'Barnsley Road', 1, 0.15, 1, Math.PI);
 // ---- weapon showcase ----
-const W = async (name, fn, wait = 400) => { await page.evaluate(fn); await page.waitForTimeout(wait); await page.screenshot({ path: path.join(outDir, name) }); };
+const W = async (name, fn, wait = 400) => { await page.evaluate(fn); await page.waitForTimeout(wait); await page.screenshot({ path: path.join(outDir, name), timeout: 180000 }); };
 await page.evaluate(() => { const g = window.__firvale; g.player.spawn(g.map.spawn.x, g.map.spawn.z, g.map.spawn.yaw); });
 await W('w01-ak-hip.png', () => {}, 800);
 await W('w02-ak-ads.png', () => { window.__input.aim = true; }, 900);
@@ -85,7 +85,7 @@ console.log('render stats', await page.evaluate(() => { const i = window.__firva
 // Portrait check
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForTimeout(800);
-await page.screenshot({ path: path.join(outDir, '11-portrait.png') });
+await page.screenshot({ path: path.join(outDir, '11-portrait.png'), timeout: 180000 });
 
 await browser.close();
 server.close();

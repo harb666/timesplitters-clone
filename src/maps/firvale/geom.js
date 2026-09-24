@@ -74,6 +74,7 @@ export class Mesher {
   }
   // vertices [[x,y,z]...] with uvs [[u,v]...]; `n` = wanted facing (vec3-ish) or null
   poly(mat, color, V, UV, n = null) {
+    if (this.discard) return;
     const g = this._g(mat, color, V[0]), base = g.pos.length / 3;
     for (let i = 0; i < V.length; i++) { g.pos.push(V[i][0], V[i][1], V[i][2]); g.uv.push(UV[i][0], UV[i][1]); }
     let flip = false;
@@ -86,6 +87,7 @@ export class Mesher {
     for (let i = 1; i < V.length - 1; i++) flip ? g.idx.push(base, base + i + 1, base + i) : g.idx.push(base, base + i, base + i + 1);
   }
   tris(mat, color, V, UV, T, up = true) {
+    if (this.discard) return;
     const g = this._g(mat, color, V[0]), base = g.pos.length / 3;
     for (let i = 0; i < V.length; i++) { g.pos.push(V[i][0], V[i][1], V[i][2]); g.uv.push(UV[i][0], UV[i][1]); }
     for (const [a, b, c] of T) {

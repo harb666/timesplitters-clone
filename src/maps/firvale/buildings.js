@@ -15,13 +15,14 @@ export class Frame {
   constructor(batch, cx, cz, ry, y0) { this.batch = batch; this.cx = cx; this.cz = cz; this.ry = ry; this.y0 = y0; this.c = Math.cos(ry); this.s = Math.sin(ry); _q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ry); this.q = _q.clone(); }
   world(lx, lz) { return [this.cx + lx * this.c + lz * this.s, this.cz - lx * this.s + lz * this.c]; }
   geo(mat, g, lx, ly, lz, { rx = 0, ry = 0, rz = 0, color, detail = false, sx = 1, sy = 1, sz = 1 } = {}) {
+    if (this.batch.discard) { g.dispose(); return; }
     const [x, z] = this.world(lx, lz);
     _e.set(rx, ry, rz); _q2.setFromEuler(_e);
     _m.compose(_p.set(x, this.y0 + ly, z), this.q.clone().multiply(_q2), _s.set(sx, sy, sz));
     g.applyMatrix4(_m);
     this.batch.add(mat, g, { color, detail });
   }
-  box(mat, lx, ly, lz, w, h, d, o = {}) { this.geo(mat, tiledBox(w, h, d, o.tile ?? 0, o.skip ?? 0), lx, ly, lz, o); }
+  box(mat, lx, ly, lz, w, h, d, o = {}) { if (this.batch.discard) return; this.geo(mat, tiledBox(w, h, d, o.tile ?? 0, o.skip ?? 0), lx, ly, lz, o); }
   // wall/coping running along local X (a..b) at local z, t thick, from
   // ground+lo to ground+hi at each end: follows the slope of the ground
   run(mat, a, b, lz, t, lo, hi, o = {}) {

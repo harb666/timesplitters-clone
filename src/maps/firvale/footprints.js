@@ -10,7 +10,7 @@
 // extruded from their footprints with window bands and flat roofs.
 import * as THREE from 'three';
 import { groundHeight as G } from '../../core/world.js';
-import { tiledBox } from '../../models/builders.js';
+import { tiledBox, StaticBatch, CHUNK } from '../../models/builders.js';
 import { Frame, rng, atlasQuad, DISPLAY } from './buildings.js';
 import { area, centroid, obb, clip, triangulate, Mesher, flatToPts, inPoly } from './geom.js';
 
@@ -116,7 +116,7 @@ function localFrame(B) {
 }
 
 // ------------------------------------------------------------------ build
-export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, special, miniMartAt }) {
+export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, special, miniMartAt, shell }) {
   const R = rng(1904);
   const list = analyse(osm, net, special);
   const detailMs = new Mesher(), ms = new Mesher();
@@ -195,8 +195,18 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   }
 
   // ---- pass 3: geometry ----
+  // Houses: here only their colliders, data and a light far version (walls,
+  // roofs, windows, chimney stacks) go in `shell`; the full detail is built
+  // later, streamed in round the player (houseDetail).
+  const det = new StaticBatch({ discard: true });
+  for (const B of list) if (B.type === 'res') {
+    const msS = new Mesher(), dmsD = new Mesher(); dmsD.discard = true;
+    shell.force = homeChunk(B);
+    buildResidential(B, msS, dmsD, det, M, world, net, houseRng(B), signs, shopSpots, shell);
+    msS.flush(shell); shell.force = null;
+  }
   for (const B of list) {
-    if (B.type === 'res') buildResidential(B, ms, detailMs, batch, M, world, net, R, signs, shopSpots);
+    if (B.type === 'res') continue;
     else if (B.type === 'shed') buildBlock(B, ms, batch, M, world, R, { h: 2.6, wall: M.brick, col: '#b9a597', roofCol: '#4a4d52', windows: false });
     else if (B.type !== 'skip') buildBig(B, ms, batch, M, world, R, net, pending);
     if (ms.m.size > 40) ms.flush(batch);
@@ -226,20 +236,37 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   }
   const stations = []; for (const [x, z] of petrol) if (!stations.some(([a, b]) => Math.hypot(a - x, b - z) < 40)) stations.push([x, z]);   // (shop + fuel points of one station)
   for (const [x, z] of stations) petrolStation(batch, M, world, net, x, z);
-  // ---- pass 4: back yards behind the terraces (now every building has its colliders) ----
-  const RY = rng(77);
-  for (const B of list) if (B.type === 'res' && !B.modern && B.plots) backYards(B, batch, M, world, net, RY);
-  for (const B of list) if (B.type === 'res' && B.modern && B.plots) rearGardens(B, batch, M, world, net);
-  const RG = rng(4242);
-  for (const B of list) if (B.type === 'res' && B.plots) frontGardens(B, batch, M, world, net, RG);
+  // ---- pass 4: yards and gardens (now every building has its colliders): colliders + data only ----
+  for (const B of list) if (B.type === 'res' && B.plots) houseGardens(B, det, M, world, net);
   roadsideBoundaries(list, batch, M, world, net);
-  BOUND.clear();
+  NOTE = false;                    // (the boundary registry is complete: streamed rebuilds only read it)
   const residential = list.filter((b) => b.type === 'res');
   return { shopSpots, miniMart: shopSpots.find((s) => s.miniMart), residential, list };
 }
 
+// ------------------------------------------------------------------ streaming
+// Each house has its own random stream, so it comes out identical however
+// many times (and in whatever order) it is rebuilt.
+function houseRng(B) { return rng(B.i * 7919 + 13); }
+export function homeChunk(B) { return [Math.floor(B.o.cx / CHUNK), Math.floor(B.o.cz / CHUNK)]; }
+function houseGardens(B, batch, M, world, net) {
+  if (!B.modern) backYards(B, batch, M, world, net, rng(B.i * 31 + 7)); else rearGardens(B, batch, M, world, net);
+  frontGardens(B, batch, M, world, net, rng(B.i * 17 + 3));
+}
+// Full detail of one house row (facades, doors, bays, sills, gutters, yards,
+// gardens...) into `batch`, all in the row's home chunk. The world should be
+// muted: its colliders were made at load.
+export function houseDetail(B, batch, M, world, net, signs) {
+  batch.force = homeChunk(B);
+  const ms = new Mesher(), dms = new Mesher();
+  buildResidential(B, ms, dms, batch, M, world, net, houseRng(B), signs, null, batch);
+  ms.flush(batch); dms.flush(batch, true);
+  if (B.plots) houseGardens(B, batch, M, world, net);
+  batch.force = null;
+}
+
 // ------------------------------------------------------------------ houses
-function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots) {
+function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots, shell = batch) {
   const F = B.F, { dMax, Dm, dR, rise } = B, dOut = dMax - Dm;
   const n2 = [F.nx, F.nz], back = [-F.nx, -F.nz];
   const eaveH = B.storeys * FLOOR + 0.45;
@@ -339,13 +366,14 @@ function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots)
     if (idx % 2 === 0 && Dm > 5) {
       const f = new Frame(batch, ...W(pl.a0 + (pl.k === 0 ? 0.5 : 0), dR - 0.2), Math.atan2(F.nx, F.nz), 0);
       f.y0 = ridge - 0.6;
-      f.box(wallMat, 0, 0.8, 0, 0.8, 1.9, 1.3, { tile: wtile, color: tint });
+      const fS = new Frame(shell, ...W(pl.a0 + (pl.k === 0 ? 0.5 : 0), dR - 0.2), Math.atan2(F.nx, F.nz), 0); fS.y0 = f.y0;
+      fS.box(wallMat, 0, 0.8, 0, 0.8, 1.9, 1.3, { tile: wtile, color: tint });                // (stack: part of the far version too)
       f.box(M.dressed, 0, 1.8, 0, 0.9, 0.12, 1.4, { color: '#b8ae9c', detail: true });
       for (const dz of [-0.35, 0.05, 0.4]) if (R() < 0.75) f.box(M.clay, 0, 2.05, dz, 0.2, 0.4, 0.2, { color: '#b35a3a', detail: true, skip: 8 });
       if (R() < 0.2) { f.box(M.metal, 0, 2.6, 0, 0.03, 1.4, 0.03, { detail: true }); f.box(M.metal, 0, 3.1, 0, 0.7, 0.03, 0.03, { detail: true }); }
     }
     // --- the front ---
-    if (pl.hasFront) facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpots);
+    if (pl.hasFront) facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpots, shell);
   });
   // colliders: the real footprint's outer walls
   const P = B.P, s = B.ccw ? 1 : -1;
@@ -369,7 +397,7 @@ function backYards(B, batch, M, world, net, R) {
     let dBack = Infinity; for (const [, d] of pl.piece) dBack = Math.min(dBack, d);
     const am = (pl.a0 + pl.a1) / 2, [bx, bz] = F.toW(am, dBack - 0.05), g = G(bx, bz);
     // how much room behind: next building / wall / road
-    const hit = world.raycastBoxes(bx, g + 1, bz, -F.nx, 0, -F.nz, 26);
+    const hit = world.raycastBoxes(bx, g + 1, bz, -F.nx, 0, -F.nz, 26, (b) => b.tag === 'building');
     const rr = net.nearest(bx - F.nx * 4, bz - F.nz * 4, null, (q) => q.kind !== 'f');
     let room = hit.dist;
     if (rr) { const edge = Math.hypot(bx - rr.px, bz - rr.pz) - rr.road.half - rr.road.pave; if (edge < room) room = Math.max(0, edge) * 2 + 2.2; } // a street right behind: yard up to its pavement
@@ -378,7 +406,7 @@ function backYards(B, batch, M, world, net, R) {
     const dEnd = dBack - depth, W = pl.a1 - pl.a0, wh = 1.75, col = B.tint;
     // flagged yard + half the back entry behind it, for the ground mask
     const dAlley = dBack - (room >= 24 ? depth + 1.5 : Math.max(depth, room / 2));
-    (B.yards ||= []).push([F.toW(pl.a0, dBack), F.toW(pl.a1, dBack), F.toW(pl.a1, dAlley), F.toW(pl.a0, dAlley)]);
+    if (!world.muted) (B.yards ||= []).push([F.toW(pl.a0, dBack), F.toW(pl.a1, dBack), F.toW(pl.a1, dAlley), F.toW(pl.a0, dAlley)]);
     const f = new Frame(batch, ...F.toW(am, dEnd), Math.atan2(-F.nx, -F.nz), G(...F.toW(am, dEnd)));
     // rear wall with a gate (local +Z = away from the house, X runs along the row, mirrored)
     const gx = (R() < 0.5 ? -1 : 1) * (W / 2 - 0.9), gw = 0.95;
@@ -410,7 +438,7 @@ function localCCW(piece) { return area(piece) > 0; }
 
 // Dress the street face of one house (Frame: origin on the front wall,
 // +Z out of the wall, X along the street, y0 = pavement level).
-function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpots) {
+function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpots, shell = batch) {
   const W = pl.a1 - pl.a0, am = (pl.a0 + pl.a1) / 2;
   // this house's own front wall (real footprints are often set back or a
   // little skewed from the row): the facade sits exactly on it
@@ -426,10 +454,11 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     if (Math.abs(phi) > 0.5) phi = 0; }
   const [fx, fz] = F.toW(am, dF), c = Math.cos(phi), sn = Math.sin(phi);
   const f = new Frame(batch, fx, fz, Math.atan2(F.nx * c - F.tx * sn, F.nz * c - F.tz * sn), pl.gF);
+  const fW = new Frame(shell, fx, fz, f.ry, pl.gF);                  // windows: part of the far version too
   const m = pl.mirror ? -1 : 1, v = (R() * 4) | 0, D = 0;
   const eH = eave - pl.gF;
   const win = (lx, ly, w, h, vv) => {
-    f.geo(M.win, atlasQuad(w, h, vv * 0.25 + 0.004, 0, vv * 0.25 + 0.246, 1), lx, ly, D + 0.025);
+    fW.geo(M.win, atlasQuad(w, h, vv * 0.25 + 0.004, 0, vv * 0.25 + 0.246, 1), lx, ly, D + 0.025);
     f.box(M.dressed, lx, ly + h / 2 + 0.1, D + 0.05, w + 0.3, 0.2, 0.12, { tile: 1, color: '#d6cbb5', detail: true, skip: 32 | 3 });
     f.box(M.dressed, lx, ly - h / 2 - 0.06, D + 0.08, w + 0.24, 0.1, 0.2, { tile: 1, color: '#d6cbb5', detail: true, skip: 32 | 3 });
   };
@@ -450,7 +479,7 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
   if (!pl.shop) {
     const dx = -(W / 2 - 0.85) * m;
     f.box(M.door, dx, 1.2, D + 0.01, 0.95, 2.1, 0.1, { color: DOORS[(R() * DOORS.length) | 0], skip: 32 | 8 });
-    f.geo(M.win, atlasQuad(0.95, 0.35, 0.26, 0.05, 0.49, 0.3), dx, 2.48, D + 0.03);
+    fW.geo(M.win, atlasQuad(0.95, 0.35, 0.26, 0.05, 0.49, 0.3), dx, 2.48, D + 0.03);
     f.box(M.dressed, dx, 2.78, D + 0.04, 1.3, 0.22, 0.14, { color: '#d6cbb5', detail: true, skip: 32 | 3 });
     f.box(M.dressed, dx, 0.1, D + 0.28, 1.2, 0.22, 0.5, { tile: 1, color: '#bfb6a4', skip: 32 | 8 });
     const bx = W > 4.2 ? 0.95 * m : 0.4 * m;
@@ -463,8 +492,8 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
       const bw = 1.5, proj = 0.65, h = 1.5;
       if (base) f.box(M.dressed, bx, y0 - 1.2, D + proj / 2, bw + 0.9, 0.9, proj, { tile: 1, color: '#cdc2ad' });
       else { f.box(wallMat, bx, y0 - 0.95, D + proj / 2, bw + 0.9, 0.5, proj, { tile: 1.3, color: tint }); }
-      f.geo(M.win, atlasQuad(bw, h, v * 0.25 + 0.004, 0, v * 0.25 + 0.246, 1), bx, y0, D + proj + 0.01);
-      for (const sd of [-1, 1]) f.geo(M.win, atlasQuad(0.65, h, v * 0.25 + 0.05, 0, v * 0.25 + 0.2, 1), bx + sd * (bw / 2 + 0.2), y0, D + proj / 2, { ry: sd * 0.78 });
+      fW.geo(M.win, atlasQuad(bw, h, v * 0.25 + 0.004, 0, v * 0.25 + 0.246, 1), bx, y0, D + proj + 0.01);
+      for (const sd of [-1, 1]) fW.geo(M.win, atlasQuad(0.65, h, v * 0.25 + 0.05, 0, v * 0.25 + 0.2, 1), bx + sd * (bw / 2 + 0.2), y0, D + proj / 2, { ry: sd * 0.78 });
       for (const sd of [-1, 1]) f.box(M.dressed, bx + sd * (bw / 2 + 0.43), y0, D + 0.1, 0.12, h + 0.1, 0.2, { color: '#d6cbb5', detail: true });   // stone mullions at the corners
       f.box(M.dressed, bx, y0 + 0.85, D + proj / 2, bw + 0.95, 0.18, proj + 0.1, { color: '#d6cbb5' });
     };
@@ -483,7 +512,7 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     const S = pl.shop;
     shopFront(f, W, S, M, signs, R, D);
     upper(4.9 - (eH < 6.3 ? 0.4 : 0)); if (B.storeys >= 3) upper(4.9 + FLOOR);
-    shopSpots.push({ x: fx, z: fz, ry: f.ry, front: f.world(0, 1.8), cat: S.cat, sign: S.cell, miniMart: !!S.miniMart, gF: pl.gF });
+    if (shopSpots) shopSpots.push({ x: fx, z: fz, ry: f.ry, front: f.world(0, 1.8), cat: S.cat, sign: S.cell, miniMart: !!S.miniMart, gF: pl.gF });
   }
 }
 
@@ -491,7 +520,9 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
 // roadside pass doesn't double them up.
 const BOUND = new Map();
 const bKey = (x, z) => Math.floor(x / 4) * 100003 + Math.floor(z / 4);
+let NOTE = true;
 function noteBound(x0, z0, x1, z1) {
+  if (!NOTE) return;
   const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 2));
   for (let k = 0; k <= n; k++) { const x = x0 + (x1 - x0) * k / n, z = z0 + (z1 - z0) * k / n, key = bKey(x, z); if (!BOUND.has(key)) BOUND.set(key, []); BOUND.get(key).push([x, z]); }
 }
@@ -547,7 +578,7 @@ function frontGardens(B, batch, M, world, net, R) {
     if (!q) return;
     const { pl, H0, H1, g0, g1 } = q, g = Math.min(g0, g1);
     if (g < 2.0) {                                                                  // straight to the street: paved forecourt
-      if (g > 0.3) (B.forecourts ||= []).push([H0, H1, [H1[0] + nx * g1, H1[1] + nz * g1], [H0[0] + nx * g0, H0[1] + nz * g0]]);
+      if (g > 0.3 && !world.muted) (B.forecourts ||= []).push([H0, H1, [H1[0] + nx * g1, H1[1] + nz * g1], [H0[0] + nx * g0, H0[1] + nz * g0]]);
       return;
     }
     const W0 = [H0[0] + nx * (g0 - 0.14), H0[1] + nz * (g0 - 0.14)], W1 = [H1[0] + nx * (g1 - 0.14), H1[1] + nz * (g1 - 0.14)];
@@ -656,7 +687,7 @@ function rearGardens(B, batch, M, world, net) {
   let a0 = Infinity, a1 = -Infinity, dBack = Infinity;
   for (const pl of P) { a0 = Math.min(a0, pl.a0); a1 = Math.max(a1, pl.a1); for (const [, d] of pl.piece) dBack = Math.min(dBack, d); }
   const am = (a0 + a1) / 2, [bx, bz] = F.toW(am, dBack - 0.05), g = G(bx, bz);
-  const hit = world.raycastBoxes(bx, g + 1, bz, -F.nx, 0, -F.nz, 30);
+  const hit = world.raycastBoxes(bx, g + 1, bz, -F.nx, 0, -F.nz, 30, (b) => b.tag === 'building');
   let room = hit.box && hit.box.tag === 'building' ? hit.dist / 2 : hit.dist - 0.3;          // halfway to the house behind
   const rr = net.nearest(bx - F.nx * 4, bz - F.nz * 4, null, (q) => q.kind !== 'f');
   if (rr) { const edge = Math.hypot(bx - rr.px, bz - rr.pz) - rr.road.half - rr.road.pave; if (edge < room + 0.2) room = Math.max(0, edge - 0.3); }
@@ -665,7 +696,7 @@ function rearGardens(B, batch, M, world, net) {
   // side room: stop at the next building or road either side
   const side = (dir) => {
     const [sx, sz] = F.toW(dir > 0 ? a1 : a0, dBack - depth / 2);
-    const h = world.raycastBoxes(sx, G(sx, sz) + 1, sz, F.tx * dir, 0, F.tz * dir, 6);
+    const h = world.raycastBoxes(sx, G(sx, sz) + 1, sz, F.tx * dir, 0, F.tz * dir, 6, (b) => b.tag === 'building');
     let r = h.box && h.box.tag === 'building' ? h.dist / 2 : 1.4;
     const rs = net.nearest(sx + F.tx * dir * 2, sz + F.tz * dir * 2, null, (q) => q.kind !== 'f');
     if (rs) { const e = Math.hypot(sx - rs.px, sz - rs.pz) - rs.road.half - rs.road.pave; if (e < r) r = Math.max(0.2, e - 0.2); }

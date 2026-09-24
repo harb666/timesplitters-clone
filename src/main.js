@@ -24,9 +24,9 @@ import { Pigeons } from './entities/pigeons.js';
 import { GrassField } from './render/grass.js';
 
 const QUALITY = {
-  low: { dpr: 1, fogNear: 35, fogFar: 140, aa: false, shadows: 0 },
-  medium: { dpr: 1.5, fogNear: 45, fogFar: 185, aa: true, shadows: 1024 },
-  high: { dpr: 2, fogNear: 50, fogFar: 200, aa: true, shadows: 2048 },
+  low: { dpr: 1, fogNear: 90, fogFar: 420, aa: false, shadows: 0 },
+  medium: { dpr: 1.5, fogNear: 130, fogFar: 620, aa: true, shadows: 1024 },
+  high: { dpr: 2, fogNear: 160, fogFar: 800, aa: true, shadows: 2048 },
 };
 
 function fatal(err) {
@@ -232,7 +232,7 @@ function boot() {
     document.body.classList.toggle('ads', arsenal.adsK > 0.6);
     game.casings.update(dt);
     for (const c of game.cars) c.update(dt, player);
-    map.updateLOD(player.pos, dt);
+    map.updateLOD(player.pos, dt, player.yaw);
     crowd.update(dt, player);
     pigeons.update(dt, player);
     grass.update(dt, player.pos);

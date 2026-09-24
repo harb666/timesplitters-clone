@@ -54,7 +54,7 @@ for (const [name, v] of views) {
     if (!(v && v.noAdvance)) g.advance(0.5); else g.advance(1 / 30);
     if (v && v.up) { p.pos.y += v.up; p.vel && p.vel.set(0, 0, 0); g.advance(1 / 30); }
   }, v);
-  await page.screenshot({ path: path.join(out, `${prefix}-${name}.png`) });
+  await page.screenshot({ path: path.join(out, `${prefix}-${name}.png`), timeout: 180000 });
   console.log('shot', name, await page.evaluate(() => { const g = window.__firvale; const i = g.renderer.info.render; return `calls ${i.calls} tris ${i.triangles} pos ${g.player.pos.toArray().map((x) => x.toFixed(1))}`; }));
 }
 await browser.close(); server.close();

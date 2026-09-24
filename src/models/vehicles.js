@@ -238,7 +238,7 @@ function lerpFn(pts) {
 // Lofted body: cross-sections along the car (plan rounding, bulging flanks,
 // shoulder, tumblehome glasshouse, crowned roof and bonnet) with arches cut
 // into the lower edge. Returns per-material geometry + a raycast helper.
-function loftBody(T, paint) {
+function loftBody(T, paint, lod = false) {
   const { L, W, r, sill, fo, wb } = T, hL = L / 2, Wh = W / 2;
   const top = curveFn(T.top), belt = lerpFn(T.belt);
   const dF = fo, dR = fo + wb, ra = r + 0.07;
@@ -257,14 +257,17 @@ function loftBody(T, paint) {
   const inGlass = (d) => d >= T.gA && d <= T.gR;
   // stations: every boundary (glass edges, pillars, arches) plus an even
   // spread in between, tighter at the rounded ends
-  const bnd = [T.gA, T.ws, T.rs, T.gR, T.sg[0], T.sg[1], T.bP - 0.05, T.bP + 0.05, T.quarter ?? -1, (T.quarter ?? -1) + 0.07, 0, 0.02, 0.06, 0.12, L - 0.12, L - 0.06, L - 0.02, L,
-    ...[1, 0.97, 0.9, 0.78, 0.6, 0.38, 0.18].flatMap((k) => [dF - ra * k, dF + ra * k, dR - ra * k, dR + ra * k]), dF, dR].filter((d) => d >= 0 && d <= L);
+  const bnd = [T.gA, T.ws, T.rs, T.gR, T.sg[0], T.sg[1], ...(lod === 2 ? [0, L] : lod ? [0, 0.12, L - 0.1, L] : [T.bP - 0.05, T.bP + 0.05, T.quarter ?? -1, (T.quarter ?? -1) + 0.07, 0, 0.02, 0.06, 0.12, L - 0.12, L - 0.06, L - 0.02, L]),
+    ...(lod === 2 ? [1] : lod ? [1, 0.55] : [1, 0.97, 0.9, 0.78, 0.6, 0.38, 0.18]).flatMap((k) => [dF - ra * k, dF + ra * k, dR - ra * k, dR + ra * k]), dF, dR].filter((d) => d >= 0 && d <= L);
   const st = [...bnd];
-  for (let d = 0.2; d < L; d += 0.2) if (!bnd.some((b) => Math.abs(b - d) < 0.07)) st.push(d);   // (arch stations are packed close: the arch edge is a smooth curve)
+  const step = lod === 2 ? 9 : lod ? 1.4 : 0.2;
+  for (let d = step; d < L; d += step) if (!bnd.some((b) => Math.abs(b - d) < 0.07)) st.push(d);   // (arch stations are packed close: the arch edge is a smooth curve)
   const D = st.sort((a, b) => a - b).filter((d, i, a) => i === 0 || d - a[i - 1] > 0.008);
   // section points (x >= 0) for station d
-  const NS = 12;
-  const section = (d) => {
+  const KEEP = lod === 2 ? [0, 3, 5, 8, 11] : lod ? [0, 1, 3, 5, 7, 8, 10, 11] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];   // (far model: fewer points round each section)
+  const NS = KEEP.length;
+  const section = (d) => KEEP.map((j) => section12(d)[j]);
+  const section12 = (d) => {
     const w = planW(d), yt = top(d), gh = inGlass(d) ? 1 : 0, yb = Math.min(bottom(d), yt - 0.08);
     const crown = gh ? 0.055 : 0.035, yedge = yt - crown;
     const yBelt = Math.max(yb + 0.1, Math.min(belt(d), yedge - (gh ? 0.004 : 0.03)));
@@ -305,7 +308,7 @@ function loftBody(T, paint) {
     for (let j = nS - 2; j >= 0; j--) pos.push(-S[j][0], S[j][1], z);
   }
   // column index k along the row -> band material index j
-  const bandJ = (k) => (k < nS - 1 ? k : row - 2 - k);
+  const bandJ = (k) => { const b = k < nS - 1 ? k : row - 2 - k; return KEEP[b + 1] - 1; };   // material of the band below the upper point
   for (let i = 0; i + 1 < D.length; i++) {
     const dm = (D[i] + D[i + 1]) / 2;
     for (let k = 0; k < row - 1; k++) {
@@ -354,9 +357,9 @@ function loftBody(T, paint) {
 // A piece laid on the body at a probe hit (w across, h up; uv = atlas
 // rect): a fine grid pressed onto the curved panel so nothing sticks out
 // past the bodywork at rounded corners.
-let PROBE = null;
+let PROBE = null, COARSE = false;
 function onSurface(hit, w, h, uv = null, off = 0.006) {
-  const sx = Math.max(1, Math.min(10, Math.round(w / 0.07))), sy = Math.max(1, Math.min(4, Math.round(h / 0.07)));
+  const sx = COARSE ? 2 : Math.max(1, Math.min(10, Math.round(w / 0.07))), sy = COARSE ? 1 : Math.max(1, Math.min(4, Math.round(h / 0.07)));
   const g = new THREE.PlaneGeometry(w, h, sx, sy);
   if (uv) { const a = g.attributes.uv; for (let i = 0; i < a.count; i++) a.setXY(i, uv[0] + a.getX(i) * (uv[2] - uv[0]), uv[1] + a.getY(i) * (uv[3] - uv[1])); }
   const n = hit.n, up = new THREE.Vector3(0, 1, 0);
@@ -378,12 +381,12 @@ function onSurface(hit, w, h, uv = null, off = 0.006) {
 }
 
 // Returns { parts: [{ mat, geo, color }], wheels: [{ x, y, z, r, w }], dims }
-export function vehicleParts(type, { paint = '#8e959c', plate = 0, alloy = 0 } = {}) {
+export function vehicleParts(type, { paint = '#8e959c', plate = 0, alloy = 0, lod = false } = {}) {
   if (type === 'bus') return busParts(TYPES.bus, paint, plate);
   const T = MODELS[type] || MODELS.hatch;
-  const B = loftBody(T, paint), parts = B.parts, add = (mat, geo, color) => { if (geo) parts.push({ mat, geo, color }); };
+  const B = loftBody(T, paint, lod), parts = B.parts, add = (mat, geo, color) => { if (geo) parts.push({ mat, geo, color }); };
   const { L, W, H, r } = T, hL = L / 2, probe = B.probe, trim = '#161719';
-  PROBE = probe;
+  PROBE = probe; COARSE = lod;
   const Z = (d) => hL - d;
   // ---- front: headlights, grille, lower intake, plate, fog lights ----
   const yBon = B.top(0.25);
@@ -410,6 +413,7 @@ export function vehicleParts(type, { paint = '#8e959c', plate = 0, alloy = 0 } =
   }
   // ---- sides: door shut lines, handles, mirrors, sill, rubbing strip ----
   const gapLine = (d, x0, x1, sx) => {
+    if (lod) return;
     const hs = []; for (let k = 0; k <= 4; k++) { const y = x0 + (x1 - x0) * k / 4, h = probe(sx * 3, y, Z(d), -sx, 0, 0); if (h) hs.push(h); }
     for (let k = 0; k + 1 < hs.length; k++) {
       const a = hs[k].p, b = hs[k + 1].p, len = a.distanceTo(b); if (len < 0.01) continue;
@@ -421,7 +425,7 @@ export function vehicleParts(type, { paint = '#8e959c', plate = 0, alloy = 0 } =
     const yb = T.sill + 0.06;
     const doorsD = T.doors === 5 ? [T.sg[0] - 0.08, T.bP + 0.02, T.sg[1] + 0.02] : [T.sg[0] - 0.08, T.bP + 0.02];
     for (const d of doorsD) gapLine(d, yb, B.belt(d) - 0.02, sx);
-    for (const d of (T.doors === 5 ? [T.bP - 0.28, T.sg[1] - 0.3] : [T.bP - 0.3])) {
+    for (const d of (lod ? [] : T.doors === 5 ? [T.bP - 0.28, T.sg[1] - 0.3] : [T.bP - 0.3])) {
       const h = probe(sx * 3, B.belt(d) - 0.12, Z(d), -sx, 0, 0); if (h) add('chrome', onSurface(h, 0.17, 0.03, null, 0.012), T.cladding ? '#9aa0a6' : '#d0d4d8');
     }
     if (T.van) { const h = probe(sx * 3, 1.0, Z(3.1), -sx, 0, 0); if (h && sx > 0) add('trim', onSurface(h, 0.02, 1.3), '#0e0f10'); }   // sliding door rail line (nearside)
@@ -495,8 +499,9 @@ function busParts(T, paint, plate) {
 }
 
 // wheel geometry: tyre (with rounded shoulders) + alloy face on the outer side
-let WG = null;
-export function wheelGeos() {
+let WG = null, WGL = null;
+export function wheelGeos(lod = false) {
+  if (lod) { if (!WGL) { const prof = [[0.64, -0.5], [1, -0.4], [1, 0.4], [0.64, 0.5]].map(([r, y]) => new THREE.Vector2(r, y)); const tyre = new THREE.LatheGeometry(prof, 8); tyre.rotateZ(Math.PI / 2); const face = new THREE.CircleGeometry(0.66, 8); face.rotateY(Math.PI / 2); WGL = { tyre, face }; } return WGL; }
   if (WG) return WG;
   const prof = [[0.64, -0.5], [0.93, -0.48], [1, -0.28], [1, 0.28], [0.93, 0.48], [0.64, 0.5]].map(([r, y]) => new THREE.Vector2(r, y));
   const tyre = new THREE.LatheGeometry(prof, 12); tyre.rotateZ(Math.PI / 2);
@@ -505,8 +510,8 @@ export function wheelGeos() {
   return WG;
 }
 // place a wheel's geometry (unit radius/width scaled) -> {tyre, face} geometries in vehicle space
-export function wheelParts(w, spin = 0) {
-  const { tyre, face } = wheelGeos();
+export function wheelParts(w, spin = 0, lod = false) {
+  const { tyre, face } = wheelGeos(lod);
   const side = Math.sign(w.x) || 1;
   const t = tyre.clone(); t.scale(w.w, w.r, w.r);
   const f = face.clone(); f.scale(1, w.r, w.r);
@@ -584,48 +589,59 @@ export function buildVehicle(type, { paint, plate = (Math.random() * 16) | 0, al
 // is built once and drawn instanced; only the ones near the player are put
 // in the instance buffers (refreshed a few times a second).
 export class ParkedFleet {
-  constructor(scene, { range = 90, variants = 2 } = {}) { this.scene = scene; this.range = range; this.variants = variants; this.list = []; this.models = new Map(); }
+  // range: how far cars are drawn at all; near: detailed model inside this, lighter model beyond
+  constructor(scene, { range = 90, near = 90, variants = 2, ground = null } = {}) { this.scene = scene; this.range = range; this.near = near; this.variants = variants; this.ground = ground; this.list = []; this.models = new Map(); }
   add(x, y, z, ry, type, paint) {
-    const v = this.list.length % this.variants, key = type + v;
-    this.list.push({ x, y, z, ry, key, paint: new THREE.Color(paint) });
-    return TYPES[type] ? { L: TYPES[type].L, W: TYPES[type].W, H: TYPES[type].H } : { L: 4, W: 1.8, H: 1.5 };
+    const v = this.list.length % this.variants, key = type + v, T = TYPES[type] || TYPES.hatch;
+    // sit on the ground under the wheels: pitch from the axles, roll from the sides
+    const q = new THREE.Quaternion();
+    if (this.ground) {
+      const G = this.ground, fx = Math.sin(ry), fz = Math.cos(ry), sx = fz, sz = -fx, a = T.wb / 2, t = T.W / 2 - 0.15;
+      const hf = G(x + fx * a, z + fz * a), hb = G(x - fx * a, z - fz * a), hl = G(x - sx * t, z - sz * t), hr = G(x + sx * t, z + sz * t);
+      const pitch = Math.atan2(hf - hb, 2 * a), roll = Math.atan2(hr - hl, 2 * t);
+      y = (hf + hb + hl + hr) / 4;
+      q.setFromEuler(new THREE.Euler(-pitch, ry, roll, 'YXZ'));
+    } else q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ry);
+    this.list.push({ x, y, z, q, key, paint: new THREE.Color(paint) });
+    return { L: T.L, W: T.W, H: T.H };
   }
   build() {
     const M = vehicleMaterials(), count = new Map();
     for (const c of this.list) count.set(c.key, (count.get(c.key) || 0) + 1);
     for (const [key, n] of count) {
       const type = key.slice(0, -1), v = +key.slice(-1);
-      const V = vehicleParts(type, { paint: '#ffffff', plate: 3 + v * 7, alloy: (v * 2 + type.length) % 4 });
-      const byMat = new Map();
-      for (const p of V.parts) { if (!byMat.has(p.mat)) byMat.set(p.mat, []); byMat.get(p.mat).push(colorize(p.geo, p.color)); }
-      for (const w of V.wheels) { const { tyre, face } = wheelParts(w, 0.7 * v); if (!byMat.has('tyre')) byMat.set('tyre', []); if (!byMat.has('rim')) byMat.set('rim', []); byMat.get('tyre').push(colorize(tyre, '#1c1c1c')); byMat.get('rim').push(colorize(face, '#ffffff')); }
-      const meshes = [];
-      const cap = Math.min(n, 600);
-      for (const [k, list] of byMat) {
-        const mesh = new THREE.InstancedMesh(mergeList(list), M[k], cap);
-        mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = k === 'paint' || k === 'trim'; mesh.receiveShadow = true;
-        if (k === 'paint') { mesh.setColorAt(0, new THREE.Color(1, 1, 1)); }
-        this.scene.add(mesh); meshes.push({ k, mesh });
-      }
-      this.models.set(key, { meshes, cap, members: this.list.filter((c) => c.key === key) });
+      const lods = [0, 1, 2].map((lod) => {
+        const V = vehicleParts(type, { paint: '#ffffff', plate: 3 + v * 7, alloy: (v * 2 + type.length) % 4, lod });
+        const byMat = new Map(), put = (k, g) => { if (!byMat.has(k)) byMat.set(k, []); byMat.get(k).push(g); };
+        for (const p of V.parts) put(p.mat, colorize(p.geo, p.color));
+        for (const w of V.wheels) { const { tyre, face } = wheelParts(w, 0.7 * v, lod); put('tyre', colorize(tyre, '#1c1c1c')); put('rim', colorize(face, '#ffffff')); }
+        const meshes = [];
+        for (const [k, list] of byMat) {
+          const mesh = new THREE.InstancedMesh(mergeList(list), M[k], n);
+          mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = lod === 0 && (k === 'paint' || k === 'trim'); mesh.receiveShadow = true;
+          if (k === 'paint') mesh.setColorAt(0, new THREE.Color(1, 1, 1));
+          this.scene.add(mesh); meshes.push({ k, mesh });
+        }
+        return { meshes, n: 0 };
+      });
+      this.models.set(key, { lods, members: this.list.filter((c) => c.key === key) });
     }
-    this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3(1, 1, 1); this._up = new THREE.Vector3(0, 1, 0);
+    this._m = new THREE.Matrix4(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3(1, 1, 1);
   }
   // yaw: the player's view direction; cars well behind the view aren't drawn
   // (anything within 15 m always is, for turning round)
   update(pos, yaw = null) {
-    const R2 = this.range * this.range, fx = yaw === null ? 0 : -Math.sin(yaw), fz = yaw === null ? 0 : -Math.cos(yaw);
+    const R2 = this.range * this.range, N2 = this.near * this.near, F2 = (this.near * 2.6) ** 2, fx = yaw === null ? 0 : -Math.sin(yaw), fz = yaw === null ? 0 : -Math.cos(yaw);
     for (const m of this.models.values()) {
-      let n = 0;
+      for (const L of m.lods) L.n = 0;
       for (const c of m.members) {
-        if (n >= m.cap) break;
         const dx = c.x - pos.x, dz = c.z - pos.z, d2 = dx * dx + dz * dz; if (d2 > R2) continue;
         if (yaw !== null && d2 > 225 && dx * fx + dz * fz < -0.35 * Math.sqrt(d2)) continue;
-        this._q.setFromAxisAngle(this._up, c.ry); this._m.compose(this._p.set(c.x, c.y, c.z), this._q, this._s);
-        for (const { k, mesh } of m.meshes) { mesh.setMatrixAt(n, this._m); if (k === 'paint') mesh.setColorAt(n, c.paint); }
-        n++;
+        const L = m.lods[d2 < N2 ? 0 : d2 < F2 ? 1 : 2], i = L.n++;
+        this._m.compose(this._p.set(c.x, c.y, c.z), c.q, this._s);
+        for (const { k, mesh } of L.meshes) { mesh.setMatrixAt(i, this._m); if (k === 'paint') mesh.setColorAt(i, c.paint); }
       }
-      for (const { mesh } of m.meshes) { mesh.count = n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true; }
+      for (const L of m.lods) for (const { mesh } of L.meshes) { mesh.count = L.n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true; }
     }
   }
 }

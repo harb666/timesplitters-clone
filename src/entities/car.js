@@ -209,10 +209,13 @@ export class Car {
     this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 7);
 
     // --- place the model ---
-    const gy = G(this.x, this.z);
-    const hl = this.dims.L * 0.35, slope = (G(this.x + this.hx * hl, this.z + this.hz * hl) - G(this.x - this.hx * hl, this.z - this.hz * hl)) / (2 * hl);
-    this.car.position.set(this.x, gy, this.z);
-    this.car.rotation.set(-Math.atan(slope), this.heading, 0);
+    // sit on the road under the four wheels: height, pitch and roll from the ground there
+    const a = this.dims.L * 0.31, t = this.dims.W / 2 - 0.15, sx = this.hz, sz = -this.hx;
+    const hf = G(this.x + this.hx * a, this.z + this.hz * a), hb = G(this.x - this.hx * a, this.z - this.hz * a);
+    const hlft = G(this.x - sx * t, this.z - sz * t), hrt = G(this.x + sx * t, this.z + sz * t);
+    this.car.position.set(this.x, (hf + hb + hlft + hrt) / 4, this.z);
+    this.car.rotation.order = 'YXZ';
+    this.car.rotation.set(-Math.atan2(hf - hb, 2 * a), this.heading, Math.atan2(hrt - hlft, 2 * t));
     this.body.position.y = this.bounceY + 0.02;
     this.body.rotation.x = this.pitch;
     this.body.rotation.z = Math.sin(performance.now() * 0.013) * 0.004 * this.throttle;
@@ -227,7 +230,7 @@ export class Car {
     for (const f of this.flames) { const sc = 0.4 + Math.random() * 0.5; f.scale.set(sc, sc, 1); }
 
     if (this.engine) {
-      this.engine.setPosition(this.x - this.hx * 1.8, gy + 0.6, this.z - this.hz * 1.8);
+      this.engine.setPosition(this.x - this.hx * 1.8, this.car.position.y + 0.6, this.z - this.hz * 1.8);
       this.engine.update(this.rpm, this.throttle, this.speed);
     }
     this.updateCollider(false);

@@ -293,12 +293,6 @@ export function setFleet(f) { FLEET = f; }
 export function parkedCar(batch, M, x, z, ry, R, type = pickType(R)) {
   const paint = pickPaint(type, R), g = G(x, z);
   const dims = FLEET ? FLEET.add(x, g, z, ry, type, paint) : addParkedVehicle(batch, x, g, z, ry, type, { paint, plate: (R() * 16) | 0, alloy: (R() * 4) | 0 }, true);
-  const f = new Frame(batch, x, z, ry, g);
-  const L = dims.L * 0.95, Wd = dims.W * 0.94, van = type === 'van';
-  const Ld = L * 0.93, Wp = Wd * 0.94;
-  f.box(M.carPaint, 0, 0.55, 0, Wp, 0.6, Ld, { color: paint });
-  if (van) f.box(M.carPaint, 0, 1.45, -0.3, Wp, 1.1, Ld - 1.4, { color: paint });
-  else f.box(M.carGlass, 0, (dims.H + 0.9) / 2 - 0.08, -0.25, Wp - 0.3, dims.H - 1.05, Ld * 0.42, { color: '#1d252c' });
   return { L: dims.L, Wd: dims.W };
 }
 

@@ -153,3 +153,6 @@ button.round.small { position: static; width: 38px; height: 38px; font-size: 18p
   .lefty #buttons { transform: scale(.88) scaleX(-1); transform-origin: bottom left; }
 }
 #objective .dist { color: #2fe0c8; font-weight: 700; white-space: nowrap; }
+
+/* free roam: no briefing box on screen */
+#mission-card { display: none !important; }

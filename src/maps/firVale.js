@@ -163,7 +163,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   const nearJunction = (x, z, r) => junctions.some(([jx, jz]) => (jx - x) ** 2 + (jz - z) ** 2 < r * r);
   const busStops = OSM.furniture.filter((f) => f.k === 'bus').map((f) => f.p);
   const keepClear = (x, z) => nearJunction(x, z, 11) || Math.hypot(x - PLACES.miniMart[0], z - PLACES.miniMart[1]) < 22 || busStops.some(([bx, bz]) => (bx - x) ** 2 + (bz - z) ** 2 < 144) || world.near(x, z, 1, []).some((b) => b.tag !== 'edge' && b.tag !== 'building' && b.tag !== 'lamp' && Math.hypot(((b.minX + b.maxX) / 2) - x, ((b.minZ + b.maxZ) / 2) - z) < 2.5);
-  const fleet = new ParkedFleet(scene, { range: quality === 'low' ? 120 : quality === 'high' ? 260 : 200 });
+  const fleet = new ParkedFleet(scene, { range: (RANGES[quality] || RANGES.medium).far, near: quality === 'low' ? 60 : quality === 'high' ? 130 : 90, ground: G });
   setFleet(fleet);
   const parked = parkCars(batch, M, world, net, keepClear) + parkLots(batch, M, world, net, OSM, quality === 'low' ? 300 : 700);
 

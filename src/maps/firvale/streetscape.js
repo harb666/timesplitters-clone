@@ -182,10 +182,10 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
   }
   // ---- trees: mapped trees, tree rows, woods and scrub ----
   const trees = [];
-  const scatter = (P, density, scale, out) => {
+  const scatter = (P, density, scale, out, kind) => {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity; for (const [x, z] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
     const n = Math.min(900, Math.round((x1 - x0) * (z1 - z0) * density));
-    for (let i = 0; i < n; i++) { const x = x0 + R() * (x1 - x0), z = z0 + R() * (z1 - z0); if (inPoly(P, x, z) && !net.onRoadOrPavement(x, z, 1.5) && !onBuilding(x, z)) out.push([x, z, scale * (0.75 + R() * 0.5)]); }
+    for (let i = 0; i < n; i++) { const x = x0 + R() * (x1 - x0), z = z0 + R() * (z1 - z0); if (inPoly(P, x, z) && !net.onRoadOrPavement(x, z, 1.5) && !onBuilding(x, z)) out.push([x, z, scale * (0.75 + R() * 0.5), kind]); }
   };
   const woods = [];
   for (const l of osm.landuse) {
@@ -193,7 +193,7 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
     const P = []; for (let i = 0; i < l.p.length; i += 2) P.push([l.p[i], l.p[i + 1]]);
     if (l.k === 'tree') scatter(P, 1 / 45, 1.0, trees);
     else if (l.k === 'wood') scatter(P, 1 / 45, 1.15, woods);
-    else if (l.k === 'scrub') scatter(P, 1 / 120, 0.6, woods);
+    else if (l.k === 'scrub') scatter(P, 1 / 60, 0.8, woods, 'bush');
     else if (l.k === 'park' || l.k === 'churchyard') scatter(P, 1 / 700, 1.1, trees);
   }
   return { trees, woods, beacons };
@@ -219,19 +219,32 @@ function inPoly(P, x, z) {
 let FOLIAGE = null;
 function foliageMaterial() {
   if (FOLIAGE) return FOLIAGE;
-  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
-  const R = rng(9);
-  for (let i = 0; i < 520; i++) {
-    const a = R() * Math.PI * 2, r = Math.sqrt(R()) * 118, x = 128 + Math.cos(a) * r, y = 128 + Math.sin(a) * r;
-    const l = 22 + R() * 34, h = 80 + R() * 40;
-    g.fillStyle = `hsla(${h},${38 + R() * 25}%,${l}%,1)`;
-    g.save(); g.translate(x, y); g.rotate(R() * Math.PI); g.beginPath(); g.ellipse(0, 0, 3 + R() * 5, 1.6 + R() * 2.4, 0, 0, 7); g.fill(); g.restore();
+  // a spray of leaves on twigs, denser and darker towards the middle (self-shading),
+  // with lit edges; alpha-tested so the outline is ragged, not a blob
+  const N = 512, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d');
+  const R = rng(9), k = N / 256;
+  g.strokeStyle = 'rgba(78,62,44,1)';
+  const twigs = [];
+  for (let i = 0; i < 9; i++) {
+    const a = i / 9 * Math.PI * 2 + R() * 0.4, L = (70 + R() * 45) * k;
+    g.lineWidth = 2.2 * k; g.beginPath(); g.moveTo(N / 2, N / 2);
+    const ex = N / 2 + Math.cos(a) * L, ey = N / 2 + Math.sin(a) * L; g.quadraticCurveTo(N / 2 + Math.cos(a + 0.3) * L * 0.5, N / 2 + Math.sin(a + 0.3) * L * 0.5, ex, ey); g.stroke();
+    twigs.push([a, L]);
   }
-  // a few twigs
-  g.strokeStyle = 'rgba(70,55,40,.9)'; g.lineWidth = 1.5;
-  for (let i = 0; i < 10; i++) { g.beginPath(); g.moveTo(128, 128); g.lineTo(128 + (R() - 0.5) * 200, 128 + (R() - 0.5) * 200); g.stroke(); }
+  for (let i = 0; i < 2600; i++) {
+    const [ta, tl] = twigs[(R() * twigs.length) | 0], t = 0.25 + R() * 0.8, a = ta + (R() - 0.5) * 0.9;
+    const rr = Math.min(118 * k, tl * t + (R() - 0.5) * 26 * k), x = N / 2 + Math.cos(a) * rr, y = N / 2 + Math.sin(a) * rr;
+    const d = Math.hypot(x - N / 2, y - N / 2) / (118 * k), lit = 0.55 + 0.45 * d;                 // darker inside
+    const hue = 78 + R() * 34, sat = 32 + R() * 26, lum = (16 + R() * 20) * lit + (R() < 0.08 ? 12 : 0);
+    g.fillStyle = `hsl(${hue},${sat}%,${lum}%)`;
+    const L = (4 + R() * 4.5) * k, W = L * (0.42 + R() * 0.2);
+    g.save(); g.translate(x, y); g.rotate(a + (R() - 0.5) * 1.6);
+    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(L * 0.5, -W, L, 0); g.quadraticCurveTo(L * 0.5, W, 0, 0); g.fill();
+    g.strokeStyle = `hsla(${hue},${sat}%,${lum + 10}%,.8)`; g.lineWidth = 0.6 * k; g.beginPath(); g.moveTo(0, 0); g.lineTo(L * 0.9, 0); g.stroke();   // midrib
+    g.restore();
+  }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
-  FOLIAGE = new THREE.MeshStandardMaterial({ map: t, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.82, metalness: 0, vertexColors: true, name: 'foliage' });
+  FOLIAGE = new THREE.MeshStandardMaterial({ map: t, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.78, metalness: 0, vertexColors: true, name: 'foliage' });
   return FOLIAGE;
 }
 const SPECIES = [
@@ -241,46 +254,87 @@ const SPECIES = [
   { name: 'birch', h: [7, 10], crown: [2.2, 3.4], trunk: 0.14, tint: ['#8fb258', '#99bb60', '#86a852'], bark: '#d9d4c8' },
   { name: 'oak', h: [8, 12], crown: [4.6, 3.4], trunk: 0.36, tint: ['#51702f', '#5a7a34', '#4a6a2c'] },
 ];
-function crossedCards(size) {
-  const geos = [];
-  for (let k = 0; k < 3; k++) { const q = new THREE.PlaneGeometry(size, size); q.rotateY(k * Math.PI / 3); if (k === 2) q.rotateX(Math.PI / 2); geos.push(q); }
-  return geos;
+// Two upright cards crossed at right angles plus one tilted card: reads as
+// a clump of leaves from any side, never as a flat plate.
+function leafClump(size, R) {
+  const out = [];
+  for (let k = 0; k < 3; k++) {
+    const q = new THREE.PlaneGeometry(size, size * (0.8 + R() * 0.3));
+    if (k === 2) q.rotateX(-0.9 + R() * 0.3); q.rotateY(k * Math.PI / 2 + R() * 0.6);
+    out.push(q);
+  }
+  return out;
 }
+function limbGeo(a, b, r0, r1) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], L = Math.hypot(dx, dy, dz);
+  const g = new THREE.CylinderGeometry(r1, r0, L, 5, 1, true); g.translate(0, L / 2, 0);
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / L, dy / L, dz / L));
+  g.applyQuaternion(q); g.translate(a[0], a[1], a[2]);
+  return g;
+}
+// Broadleaf trees: a tapering trunk with a root flare, main limbs forking
+// into the crown, and leaf clumps at the limb tips and through the crown
+// (lit as one rounded mass). `cheap` (woods, far behind others) uses fewer
+// clumps. Scrub is ground-hugging bushes, not little trees.
 export function plantTrees(batch, M, world, list, cheap = false) {
   const R = rng(31), fol = foliageMaterial();
-  const up = new THREE.Vector3(0, 1, 0);
-  for (const [x, z, s0] of list) {
-    const sp = SPECIES[(R() * SPECIES.length) | 0], s = s0 * (cheap ? 0.85 : 1);
-    const g = G(x, z), H = (sp.h[0] + R() * (sp.h[1] - sp.h[0])) * s, cb = H * 0.42;
-    const f = new Frame(batch, x, z, R() * 6, g);
-    const barkCol = sp.bark || '#5f5043', tr = sp.trunk * s;
-    f.geo(M.bark, boxUV(new THREE.CylinderGeometry(tr * 0.7, tr, cb + 0.6, 6, 1, true), 1.5), 0, (cb + 0.6) / 2 - 0.3, 0, { color: barkCol });
-    // main limbs
-    const nl = cheap ? 0 : 3;
+  for (const [x, z, s0, kind] of list) {
+    const g = G(x, z) - 0.05;
+    if (kind === 'bush') { bush(batch, fol, x, z, g, s0, R); continue; }
+    const sp = SPECIES[(R() * SPECIES.length) | 0], s = s0;
+    const H = (sp.h[0] + R() * (sp.h[1] - sp.h[0])) * s, cb = H * (0.3 + R() * 0.12);
+    const barkCol = sp.bark || '#5f5043', tr = sp.trunk * s * 1.15;
+    const [rx, ry] = sp.crown, crx = rx * s * (0.85 + R() * 0.3), cry = ry * s, cy = g + cb + cry * 0.9;
+    const lean = [(R() - 0.5) * 0.06, (R() - 0.5) * 0.06];
+    // trunk (into the ground) and a root flare
+    const top = [x + lean[0] * H, g + cb + cry * 0.6, z + lean[1] * H];
+    batch.add(M.bark, limbGeo([x, g - 0.5, z], top, tr, tr * 0.45), { color: barkCol });
+    batch.add(M.bark, new THREE.CylinderGeometry(tr, tr * 1.7, 0.5, 7, 1, true), { x, y: g + 0.2, z, color: barkCol });
+    // limbs and their tips
+    const nl = cheap ? 4 : 6, tips = [];
     for (let k = 0; k < nl; k++) {
-      const a = k / nl * Math.PI * 2 + R(), tilt = 0.45 + R() * 0.35, L = H * 0.38;
-      const limb = new THREE.CylinderGeometry(tr * 0.3, tr * 0.6, L, 4, 1, true); limb.translate(0, L / 2, 0); limb.rotateZ(tilt); limb.rotateY(a);
-      f.geo(M.bark, limb, 0, cb, 0, { color: barkCol, detail: true });
+      const a = k / nl * Math.PI * 2 + R() * 0.8, up = 0.35 + R() * 0.5, h0 = g + cb + (R() * 0.5) * cry;
+      const base = [x + lean[0] * (h0 - g), h0, z + lean[1] * (h0 - g)];
+      const tip = [x + Math.cos(a) * crx * (0.55 + R() * 0.3), cy + (up - 0.35) * cry * 1.1, z + Math.sin(a) * crx * (0.55 + R() * 0.3)];
+      batch.add(M.bark, limbGeo(base, tip, tr * 0.5, tr * 0.18), { color: barkCol, detail: cheap });
+      tips.push(tip);
+      if (!cheap) { const mid = [(base[0] + tip[0]) / 2, (base[1] + tip[1]) / 2, (base[2] + tip[2]) / 2], b2 = [mid[0] + (R() - 0.5) * crx * 0.7, mid[1] + cry * (0.2 + R() * 0.4), mid[2] + (R() - 0.5) * crx * 0.7]; batch.add(M.bark, limbGeo(mid, b2, tr * 0.22, tr * 0.08), { color: barkCol, detail: true }); tips.push(b2); }
     }
-    // crown of leaf clusters in an ellipsoid; normals point out from the crown centre
-    const [rx, ry] = sp.crown, crx = rx * s * (0.85 + R() * 0.3), cry = ry * s, cy = cb + cry * 0.95;
-    const n = cheap ? 5 : 10, tint = sp.tint[(R() * sp.tint.length) | 0];
+    // leaf clumps: at the tips, plus through the crown biased to its outside
+    const tint = sp.tint[(R() * sp.tint.length) | 0], nIn = cheap ? 7 : 16, pos = [...tips];
+    for (let k = 0; k < nIn; k++) {
+      const u = R() * 2 - 1, th = R() * Math.PI * 2, rr = 0.3 + 0.6 * Math.sqrt(R());
+      pos.push([x + Math.sqrt(1 - u * u) * Math.cos(th) * crx * rr, cy + u * cry * rr * 0.85, z + Math.sin(th) * Math.sqrt(1 - u * u) * crx * rr]);
+    }
     const parts = [];
-    for (let k = 0; k < n; k++) {
-      // spread points through the crown volume, biased to the surface
-      const u = R() * 2 - 1, th = R() * Math.PI * 2, rr = 0.55 + 0.45 * Math.sqrt(R());
-      const px = Math.sqrt(1 - u * u) * Math.cos(th) * crx * rr, py = u * cry * rr * 0.85, pz = Math.sqrt(1 - u * u) * Math.sin(th) * crx * rr;
-      const size = (2.7 + R() * 1.5) * s * (cheap ? 1.4 : 1);   // (fewer, slightly bigger clusters)
-      for (const q of crossedCards(size)) {
-        q.rotateY(R() * Math.PI); q.translate(px, cy + py, pz);
-        const pos = q.attributes.position, nor = q.attributes.normal;
-        for (let i = 0; i < pos.count; i++) { const v = new THREE.Vector3(pos.getX(i), pos.getY(i) - cy * 0.97, pos.getZ(i)).normalize(); nor.setXYZ(i, v.x, v.y + 0.25, v.z); }
-        parts.push(q);
+    for (const p of pos) {
+      const size = (2.8 + R() * 1.4) * s * (cheap ? 1.25 : 1);
+      for (const q of leafClump(size, R)) {
+        q.translate(p[0], p[1], p[2]);
+        // normals out from the crown centre (soft, rounded lighting)
+        const P = q.attributes.position, Nn = q.attributes.normal, v = new THREE.Vector3();
+        for (let i = 0; i < P.count; i++) { v.set(P.getX(i) - x, (P.getY(i) - cy) * 1.3 + cry * 0.3, P.getZ(i) - z).normalize(); Nn.setXYZ(i, v.x, v.y, v.z); }
+        parts.push([q, p[1] < cy - cry * 0.3 ? shade(tint, 0.8) : tint]);
       }
     }
-    for (const q of parts) { f.geo(fol, q, 0, 0, 0, { color: tint }); }
+    for (const [q, c] of parts) batch.add(fol, q, { color: c });
     world.addBox(x - tr, x + tr, g - 1, g + cb, z - tr, z + tr, 'tree');
-    void up;
+  }
+}
+function shade(hex, k) { const c = new THREE.Color(hex); c.multiplyScalar(k); return '#' + c.getHexString(); }
+// Bush: leaf clumps in a low dome sitting on the ground.
+function bush(batch, fol, x, z, g, s, R) {
+  const w = (1.2 + R() * 1.2) * s * 1.6, h = w * (0.55 + R() * 0.3), n = 3 + ((R() * 3) | 0);
+  const tint = ['#4f6f2e', '#5b7b35', '#46652a', '#627f3a'][(R() * 4) | 0];
+  for (let k = 0; k < n; k++) {
+    const a = R() * Math.PI * 2, r = R() * w * 0.35, cx = x + Math.cos(a) * r, cz = z + Math.sin(a) * r, gg = G(cx, cz) - 0.05;
+    const size = w * (0.65 + R() * 0.3);
+    for (const q of leafClump(size, R)) {
+      q.translate(cx, gg + size * 0.42 + (k ? R() * h * 0.3 : 0), cz);
+      const P = q.attributes.position, Nn = q.attributes.normal, v = new THREE.Vector3();
+      for (let i = 0; i < P.count; i++) { v.set(P.getX(i) - x, Math.max(0.2, P.getY(i) - gg), P.getZ(i) - z).normalize(); Nn.setXYZ(i, v.x, v.y, v.z); }
+      batch.add(fol, q, { color: k ? tint : shade(tint, 0.85) });
+    }
   }
 }
 

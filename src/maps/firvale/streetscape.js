@@ -254,23 +254,23 @@ export function plantTrees(batch, M, world, list, cheap = false) {
     const g = G(x, z), H = (sp.h[0] + R() * (sp.h[1] - sp.h[0])) * s, cb = H * 0.42;
     const f = new Frame(batch, x, z, R() * 6, g);
     const barkCol = sp.bark || '#5f5043', tr = sp.trunk * s;
-    f.geo(M.bark, boxUV(new THREE.CylinderGeometry(tr * 0.7, tr, cb + 0.6, 7), 1.5), 0, (cb + 0.6) / 2 - 0.3, 0, { color: barkCol });
+    f.geo(M.bark, boxUV(new THREE.CylinderGeometry(tr * 0.7, tr, cb + 0.6, 6, 1, true), 1.5), 0, (cb + 0.6) / 2 - 0.3, 0, { color: barkCol });
     // main limbs
-    const nl = cheap ? 2 : 4;
+    const nl = cheap ? 0 : 3;
     for (let k = 0; k < nl; k++) {
       const a = k / nl * Math.PI * 2 + R(), tilt = 0.45 + R() * 0.35, L = H * 0.38;
-      const limb = new THREE.CylinderGeometry(tr * 0.3, tr * 0.6, L, 5); limb.translate(0, L / 2, 0); limb.rotateZ(tilt); limb.rotateY(a);
+      const limb = new THREE.CylinderGeometry(tr * 0.3, tr * 0.6, L, 4, 1, true); limb.translate(0, L / 2, 0); limb.rotateZ(tilt); limb.rotateY(a);
       f.geo(M.bark, limb, 0, cb, 0, { color: barkCol, detail: true });
     }
     // crown of leaf clusters in an ellipsoid; normals point out from the crown centre
     const [rx, ry] = sp.crown, crx = rx * s * (0.85 + R() * 0.3), cry = ry * s, cy = cb + cry * 0.95;
-    const n = cheap ? 7 : 14, tint = sp.tint[(R() * sp.tint.length) | 0];
+    const n = cheap ? 5 : 10, tint = sp.tint[(R() * sp.tint.length) | 0];
     const parts = [];
     for (let k = 0; k < n; k++) {
       // spread points through the crown volume, biased to the surface
       const u = R() * 2 - 1, th = R() * Math.PI * 2, rr = 0.55 + 0.45 * Math.sqrt(R());
       const px = Math.sqrt(1 - u * u) * Math.cos(th) * crx * rr, py = u * cry * rr * 0.85, pz = Math.sqrt(1 - u * u) * Math.sin(th) * crx * rr;
-      const size = (2.4 + R() * 1.4) * s * (cheap ? 1.25 : 1);
+      const size = (2.7 + R() * 1.5) * s * (cheap ? 1.4 : 1);   // (fewer, slightly bigger clusters)
       for (const q of crossedCards(size)) {
         q.rotateY(R() * Math.PI); q.translate(px, cy + py, pz);
         const pos = q.attributes.position, nor = q.attributes.normal;
@@ -345,7 +345,7 @@ export function parkLots(batch, M, world, net, osm, maxCars = 700) {
       // bay lines either side
       for (const du of [-1.25, 1.25]) {
         const lx = x + along[0] * du, lz = z + along[1] * du;
-        batch.box(M.line, lx, G(lx, lz) + 0.03, lz, 0.1, 0.02, 4.6, { color: '#e9e7df', ry, detail: true });
+        batch.add(M.line, new THREE.PlaneGeometry(0.1, 4.6).rotateX(-Math.PI / 2), { x: lx, y: G(lx, lz) + 0.05, z: lz, color: '#e9e7df', ry, detail: true });
       }
       if (n < maxCars && R() < 0.68) {
         const { L, Wd } = parkedCar(batch, M, x + (R() - 0.5) * 0.2, z + (R() - 0.5) * 0.2, ry + (R() - 0.5) * 0.06 + (R() < 0.2 ? Math.PI : 0), R);

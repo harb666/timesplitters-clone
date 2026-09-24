@@ -11,7 +11,7 @@ const _c = new THREE.Color();
 
 // Box whose UVs are in metres / tile, so textures tile at a constant scale
 // no matter how big the box is.
-export function tiledBox(w, h, d, tile = 0) {
+export function tiledBox(w, h, d, tile = 0, skip = 0) {
   const g = new THREE.BoxGeometry(w, h, d);
   if (tile > 0) {
     const uv = g.attributes.uv;
@@ -24,7 +24,19 @@ export function tiledBox(w, h, d, tile = 0) {
       }
     }
   }
-  return g;
+  if (!skip) return g;
+  // leave out faces that can never be seen (bits: 1 +x, 2 -x, 4 +y, 8 -y, 16 +z, 32 -z)
+  const keep = [0, 1, 2, 3, 4, 5].filter((f) => !(skip & (1 << f)));
+  const out = new THREE.BufferGeometry(), idx = [];
+  for (const k of ['position', 'normal', 'uv']) {
+    const a = g.attributes[k], n = a.itemSize, arr = new Float32Array(keep.length * 4 * n);
+    keep.forEach((f, j) => arr.set(a.array.subarray(f * 4 * n, f * 4 * n + 4 * n), j * 4 * n));
+    out.setAttribute(k, new THREE.BufferAttribute(arr, n));
+  }
+  const I = g.index.array;
+  keep.forEach((f, j) => { for (let t = 0; t < 6; t++) idx.push(I[f * 6 + t] - f * 4 + j * 4); });
+  out.setIndex(idx); g.dispose();
+  return out;
 }
 
 function ensureAttrs(g, color) {
@@ -95,27 +107,65 @@ export function mergeGeometries(list, { compact = true } = {}) {
 // `detail` go in a separate layer that is hidden beyond DETAIL_RANGE.
 export const CHUNK = 128;
 function dropArray() { this.array = null; }
-export class StaticBatch {
-  constructor() { this.groups = new Map(); }
+// growable typed array
+class Grow {
+  constructor(T, n = 1024) { this.a = new T(n); this.n = 0; }
+  need(k) { if (this.n + k > this.a.length) { let m = this.a.length * 2; while (m < this.n + k) m *= 2; const b = new this.a.constructor(m); b.set(this.a.subarray(0, this.n)); this.a = b; } }
+  done() { return this.a.slice(0, this.n); }
+}
+const QS = 128;                       // quantisation half-range (m) round each chunk's centre
+const half = THREE.DataUtils.toHalfFloat;
 
-  // Add any geometry (it is consumed) with a transform and tint colour.
+export class StaticBatch {
+  // Pieces are packed straight into compact per-chunk buffers as they are
+  // added (16-bit positions relative to the chunk centre, byte normals,
+  // half-float UVs, 16-bit tints, 16-bit indices, <=65535 vertices a part),
+  // so building the town never holds thousands of loose geometries in memory.
+  constructor() { this.groups = new Map(); this.parts = []; }
+
   add(material, geometry, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, color, detail = false, chunk } = {}) {
     if (x || y || z || rx || ry || rz || sx !== 1 || sy !== 1 || sz !== 1) {
       _e.set(rx, ry, rz); _q.setFromEuler(_e);
       _m.compose(_p.set(x, y, z), _q, _s.set(sx, sy, sz));
       geometry.applyMatrix4(_m);
     }
-    ensureAttrs(geometry, color);
+    if (!geometry.attributes.normal) geometry.computeVertexNormals();
+    const P = geometry.attributes.position, n = P.count, pa = P.array;
     let cx, cz;
     if (chunk) { [cx, cz] = chunk; } else {
-      const pa = geometry.attributes.position.array; let mx = 0, mz = 0; const n = pa.length / 3, st = Math.max(1, Math.floor(n / 8)); let k = 0;
+      let mx = 0, mz = 0; const st = Math.max(1, Math.floor(n / 8)); let k = 0;
       for (let i = 0; i < n; i += st) { mx += pa[i * 3]; mz += pa[i * 3 + 2]; k++; }
       cx = Math.floor(mx / k / CHUNK); cz = Math.floor(mz / k / CHUNK);
     }
     const key = material.uuid + '|' + cx + '|' + cz + '|' + (detail ? 1 : 0);
     let grp = this.groups.get(key);
-    if (!grp) { grp = { material, list: [], detail, count: 0 }; this.groups.set(key, grp); }
-    grp.list.push(geometry); grp.count += geometry.attributes.position.count;
+    if (!grp || grp.v + n > 65535) {
+      if (grp) this.parts.push(grp);
+      grp = { material, detail, cx, cz, v: 0, pos: new Grow(Int16Array), nor: new Grow(Int8Array), uv: new Grow(Uint16Array), col: new Grow(Uint16Array), idx: new Grow(Uint16Array) };
+      this.groups.set(key, grp);
+    }
+    const ox = (cx + 0.5) * CHUNK, oz = (cz + 0.5) * CHUNK, q = 32767 / QS;
+    const na = geometry.attributes.normal.array, U = geometry.attributes.uv;
+    _c.set(color ?? 0xffffff);
+    const cr = Math.round(Math.min(1, _c.r) * 65535), cg = Math.round(Math.min(1, _c.g) * 65535), cb = Math.round(Math.min(1, _c.b) * 65535);
+    grp.pos.need(n * 3); grp.nor.need(n * 3); grp.uv.need(n * 2); grp.col.need(n * 3);
+    const po = grp.pos.a, no = grp.nor.a, uo = grp.uv.a, co = grp.col.a, o3 = grp.pos.n, o2 = grp.uv.n;
+    const cl = (v) => (v > 32767 ? 32767 : v < -32767 ? -32767 : v);
+    let mu = 0, mv = 0;
+    if (U) { mu = Infinity; mv = Infinity; for (let i = 0; i < n; i++) { const u = U.getX(i), v = U.getY(i); if (u < mu) mu = u; if (v < mv) mv = v; } mu = Math.floor(mu); mv = Math.floor(mv); }
+    for (let i = 0; i < n; i++) {
+      const j = i * 3;
+      po[o3 + j] = cl(Math.round((pa[j] - ox) * q)); po[o3 + j + 1] = cl(Math.round(pa[j + 1] * q)); po[o3 + j + 2] = cl(Math.round((pa[j + 2] - oz) * q));
+      no[o3 + j] = Math.round(Math.max(-1, Math.min(1, na[j])) * 127); no[o3 + j + 1] = Math.round(Math.max(-1, Math.min(1, na[j + 1])) * 127); no[o3 + j + 2] = Math.round(Math.max(-1, Math.min(1, na[j + 2])) * 127);
+      co[o3 + j] = cr; co[o3 + j + 1] = cg; co[o3 + j + 2] = cb;
+      uo[o2 + i * 2] = U ? half(U.getX(i) - mu) : 0; uo[o2 + i * 2 + 1] = U ? half(U.getY(i) - mv) : 0;
+    }
+    grp.pos.n += n * 3; grp.nor.n += n * 3; grp.col.n += n * 3; grp.uv.n += n * 2;
+    const base = grp.v;
+    if (geometry.index) { const ia = geometry.index.array; grp.idx.need(ia.length); for (let i = 0; i < ia.length; i++) grp.idx.a[grp.idx.n + i] = ia[i] + base; grp.idx.n += ia.length; }
+    else { grp.idx.need(n); for (let i = 0; i < n; i++) grp.idx.a[grp.idx.n + i] = base + i; grp.idx.n += n; }
+    grp.v += n;
+    geometry.dispose();
     return this;
   }
 
@@ -129,7 +179,7 @@ export class StaticBatch {
   // copings and kerbs that follow the ground instead of stepping.
   sloped(material, x0, z0, x1, z1, t, b0, b1, t0, t1, { color, tile = 0, detail = false } = {}) {
     const L = Math.hypot(x1 - x0, z1 - z0); if (L < 1e-3) return;
-    const g = tiledBox(t, ((t0 - b0) + (t1 - b1)) / 2, L, tile), P = g.attributes.position;
+    const g = tiledBox(t, ((t0 - b0) + (t1 - b1)) / 2, L, tile, 8), P = g.attributes.position;   // (no underside: always buried)
     const ux = (x1 - x0) / L, uz = (z1 - z0) / L;
     for (let i = 0; i < P.count; i++) {
       const lx = P.getX(i), lz = P.getZ(i), k = lz / L + 0.5, top = P.getY(i) > 0;
@@ -141,21 +191,27 @@ export class StaticBatch {
 
   build(parent) {
     const meshes = [];
-    for (const grp of this.groups.values()) {
-      const geo = mergeGeometries(grp.list);
+    for (const grp of [...this.parts, ...this.groups.values()]) {
+      if (!grp.v) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(grp.pos.done(), 3, true));
+      geo.setAttribute('normal', new THREE.BufferAttribute(grp.nor.done(), 3, true));
+      geo.setAttribute('uv', new THREE.Float16BufferAttribute(grp.uv.done(), 2));
+      geo.setAttribute('color', new THREE.BufferAttribute(grp.col.done(), 3, true));
+      geo.setIndex(new THREE.BufferAttribute(grp.idx.done(), 1));
+      grp.pos = grp.nor = grp.uv = grp.col = grp.idx = null;
+      geo.computeBoundingSphere();
       // once the GPU has the scenery, drop the JavaScript copy (it's never read back)
       for (const k in geo.attributes) geo.attributes[k].onUpload(dropArray);
       geo.index.onUpload(dropArray);
-      const mesh = new THREE.Mesh(geo, grp.material), q = geo.userData.q;
-      if (q) { mesh.position.set(q.cx, q.cy, q.cz); mesh.scale.setScalar(q.S); }
+      const mesh = new THREE.Mesh(geo, grp.material);
+      mesh.position.set((grp.cx + 0.5) * CHUNK, 0, (grp.cz + 0.5) * CHUNK); mesh.scale.setScalar(QS);
       mesh.updateMatrix(); mesh.matrixAutoUpdate = false;
-      // world-space bounds for the distance culling
-      const bs = geo.boundingSphere; mesh.userData.wc = bs.center.clone().multiplyScalar(q ? q.S : 1).add(mesh.position); mesh.userData.wr = bs.radius * (q ? q.S : 1);
       mesh.userData.detail = grp.detail;
+      const bs = geo.boundingSphere; mesh.userData.wc = bs.center.clone().multiplyScalar(QS).add(mesh.position); mesh.userData.wr = bs.radius * QS;
       parent.add(mesh); meshes.push(mesh);
-      grp.list.forEach((g) => g.dispose());
     }
-    this.groups.clear();
+    this.groups.clear(); this.parts = [];
     return meshes;
   }
 }

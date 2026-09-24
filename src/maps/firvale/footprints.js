@@ -10,6 +10,7 @@
 // extruded from their footprints with window bands and flat roofs.
 import * as THREE from 'three';
 import { groundHeight as G } from '../../core/world.js';
+import { tiledBox } from '../../models/builders.js';
 import { Frame, rng, atlasQuad, DISPLAY } from './buildings.js';
 import { area, centroid, obb, clip, triangulate, Mesher, flatToPts, inPoly } from './geom.js';
 
@@ -340,7 +341,7 @@ function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots)
       f.y0 = ridge - 0.6;
       f.box(wallMat, 0, 0.8, 0, 0.8, 1.9, 1.3, { tile: wtile, color: tint });
       f.box(M.dressed, 0, 1.8, 0, 0.9, 0.12, 1.4, { color: '#b8ae9c', detail: true });
-      for (const dz of [-0.35, 0.05, 0.4]) if (R() < 0.75) f.box(M.clay, 0, 2.05, dz, 0.2, 0.4, 0.2, { color: '#b35a3a', detail: true });
+      for (const dz of [-0.35, 0.05, 0.4]) if (R() < 0.75) f.box(M.clay, 0, 2.05, dz, 0.2, 0.4, 0.2, { color: '#b35a3a', detail: true, skip: 8 });
       if (R() < 0.2) { f.box(M.metal, 0, 2.6, 0, 0.03, 1.4, 0.03, { detail: true }); f.box(M.metal, 0, 3.1, 0, 0.7, 0.03, 0.03, { detail: true }); }
     }
     // --- the front ---
@@ -429,8 +430,8 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
   const eH = eave - pl.gF;
   const win = (lx, ly, w, h, vv) => {
     f.geo(M.win, atlasQuad(w, h, vv * 0.25 + 0.004, 0, vv * 0.25 + 0.246, 1), lx, ly, D + 0.025);
-    f.box(M.dressed, lx, ly + h / 2 + 0.1, D + 0.05, w + 0.3, 0.2, 0.12, { tile: 1, color: '#d6cbb5', detail: true });
-    f.box(M.dressed, lx, ly - h / 2 - 0.06, D + 0.08, w + 0.24, 0.1, 0.2, { tile: 1, color: '#d6cbb5', detail: true });
+    f.box(M.dressed, lx, ly + h / 2 + 0.1, D + 0.05, w + 0.3, 0.2, 0.12, { tile: 1, color: '#d6cbb5', detail: true, skip: 32 | 3 });
+    f.box(M.dressed, lx, ly - h / 2 - 0.06, D + 0.08, w + 0.24, 0.1, 0.2, { tile: 1, color: '#d6cbb5', detail: true, skip: 32 | 3 });
   };
   // ginnel: the covered passage through the terrace to the back yards, on the
   // party wall between every other pair of houses (dark opening, brick arch)
@@ -441,17 +442,17 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
     f.box(M.dressed, gx, 2.36, D + 0.06, 0.28, 0.2, 0.12, { color: '#d9ccb4', detail: true });          // keystone
   }
   // gutter + downpipe
-  f.box(M.darkMetal, 0, eH - 0.05, D + 0.12, W, 0.12, 0.14, { color: '#1c1c1c', detail: true });
+  f.box(M.darkMetal, 0, eH - 0.05, D + 0.12, W, 0.12, 0.14, { color: '#1c1c1c', detail: true, skip: 32 | 3 });
   if (pl.k % 2) f.box(M.darkMetal, W / 2 - 0.08, eH / 2, D + 0.06, 0.08, eH, 0.08, { color: '#1c1c1c', detail: true });
   // plinth
-  f.box(M.dressed, 0, 0.1, D + 0.02, W, 0.5, 0.06, { tile: 1, color: '#cfc3ad', detail: true });
+  f.box(M.dressed, 0, 0.1, D + 0.02, W, 0.5, 0.06, { tile: 1, color: '#cfc3ad', detail: true, skip: 32 | 8 | 3 });
   const upper = (y) => { if (y + 0.7 > eH) return; win(W > 4.4 ? 0.95 * m : 0, y, 1.2, 1.35, (v + 1) % 4); if (W > 4.6) win(-(W / 2 - 1.0) * m, y, 0.8, 1.3, (v + 2) % 4); };
   if (!pl.shop) {
     const dx = -(W / 2 - 0.85) * m;
-    f.box(M.door, dx, 1.2, D + 0.01, 0.95, 2.1, 0.1, { color: DOORS[(R() * DOORS.length) | 0] });
+    f.box(M.door, dx, 1.2, D + 0.01, 0.95, 2.1, 0.1, { color: DOORS[(R() * DOORS.length) | 0], skip: 32 | 8 });
     f.geo(M.win, atlasQuad(0.95, 0.35, 0.26, 0.05, 0.49, 0.3), dx, 2.48, D + 0.03);
-    f.box(M.dressed, dx, 2.78, D + 0.04, 1.3, 0.22, 0.14, { color: '#d6cbb5', detail: true });
-    f.box(M.dressed, dx, 0.1, D + 0.28, 1.2, 0.22, 0.5, { tile: 1, color: '#bfb6a4' });
+    f.box(M.dressed, dx, 2.78, D + 0.04, 1.3, 0.22, 0.14, { color: '#d6cbb5', detail: true, skip: 32 | 3 });
+    f.box(M.dressed, dx, 0.1, D + 0.28, 1.2, 0.22, 0.5, { tile: 1, color: '#bfb6a4', skip: 32 | 8 });
     const bx = W > 4.2 ? 0.95 * m : 0.4 * m;
     // the big c.1900-1910 terraces on the main roads (Firth Park Road, Barnsley
     // Road) have canted bays, often up both storeys; Page Hall's small
@@ -564,8 +565,8 @@ function frontGardens(B, batch, M, world, net, R) {
     run(W0, Ga); run(Gb, W1);
     if (kind !== 'fence' && !(kind === 'hedge' && B.modern)) for (const P of [Ga, Gb]) {         // gate piers
       const gp = G(...P), ph = (kind === 'hedge' ? 0.55 : wallH) + 0.22;
-      batch.box(M.brick, P[0], gp + ph / 2 - 0.2, P[1], 0.36, ph + 0.4, 0.36, { color: B.tint, tile: 1.3, ry: Math.atan2(ex, ez), detail: true });
-      batch.box(M.kerb, P[0], gp + ph + 0.05, P[1], 0.44, 0.1, 0.44, { color: '#d4ccbb', ry: Math.atan2(ex, ez), detail: true });
+      batch.add(M.brick, tiledBox(0.36, ph + 0.4, 0.36, 1.3, 12), { x: P[0], y: gp + ph / 2 - 0.2, z: P[1], color: B.tint, ry: Math.atan2(ex, ez), detail: true });
+      batch.add(M.kerb, tiledBox(0.44, 0.1, 0.44, 0, 8), { x: P[0], y: gp + ph + 0.05, z: P[1], color: '#d4ccbb', ry: Math.atan2(ex, ez), detail: true });
     }
     // dividing wall with the house to the left (and the right at the end of a row)
     const side = (Hp, Wp) => { if (B.modern) fence(...Hp, ...Wp); else brickWall(...Hp, ...Wp, 0.7); };

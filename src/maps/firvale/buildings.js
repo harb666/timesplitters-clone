@@ -21,7 +21,7 @@ export class Frame {
     g.applyMatrix4(_m);
     this.batch.add(mat, g, { color, detail });
   }
-  box(mat, lx, ly, lz, w, h, d, o = {}) { this.geo(mat, tiledBox(w, h, d, o.tile ?? 0), lx, ly, lz, o); }
+  box(mat, lx, ly, lz, w, h, d, o = {}) { this.geo(mat, tiledBox(w, h, d, o.tile ?? 0, o.skip ?? 0), lx, ly, lz, o); }
   // wall/coping running along local X (a..b) at local z, t thick, from
   // ground+lo to ground+hi at each end: follows the slope of the ground
   run(mat, a, b, lz, t, lo, hi, o = {}) {

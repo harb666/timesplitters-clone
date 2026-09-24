@@ -263,10 +263,10 @@ export class RoadNetwork {
       // road surface in the corner the curve cuts off
       fill(M.road, [c.C, ...[...c.arc].reverse()], c.lift, 4, '#ffffff');
       // curved kerb
-      for (let k = 0; k + 1 < c.arc.length; k++) {
-        const [ax, az] = c.arc[k], [bx, bz] = c.arc[k + 1], ga = G(ax, az), gb = G(bx, bz);
-        batch.sloped(M.kerb, ax, az, bx, bz, 0.22, ga - 0.09, gb - 0.09, ga + 0.21, gb + 0.21, { color: '#b9b7b1', tile: 1 });
-      }
+      const K = c.arc.map((p, k) => { const q = c.arc[Math.min(k + 1, c.arc.length - 1)], o = c.arc[Math.max(k - 1, 0)], L = Math.hypot(q[0] - o[0], q[1] - o[1]) || 1; return [p[0], p[1], (q[0] - o[0]) / L, (q[1] - o[1]) / L]; });
+      // side: which way is the road from the arc? (towards the corner point C)
+      const m = K[K.length >> 1], toC = [c.C[0] - m[0], c.C[1] - m[1]], sd = (m[3] * toC[0] - m[2] * toC[1]) > 0 ? -1 : 1;
+      this.kerbStrip(batch, M.kerb, K, sd);
     }
   }
 
@@ -314,16 +314,39 @@ export class RoadNetwork {
     }
   }
 
+  // Kerb as one continuous strip along the road (road face + top), not a
+  // box per segment: a fraction of the memory.
   kerb(batch, mat, r, side, keep) {
-    const S = r.samples, o = side * r.half;
-    for (let i = 0; i < S.length - 1; i += 1) {
-      const a = S[i], b = S[i + 1];
-      const x = (a.x + b.x) / 2 + a.tz * o, z = (a.z + b.z) / 2 - a.tx * o;
-      if (keep && !keep(x, z, (a.s + b.s) / 2)) continue;
-      const ax = a.x + a.tz * o, az = a.z - a.tx * o, bx = b.x + b.tz * o, bz = b.z - b.tx * o, ga = G(ax, az), gb = G(bx, bz);
-      batch.sloped(mat, ax, az, bx, bz, 0.22, ga - 0.09, gb - 0.09, ga + 0.21, gb + 0.21, { color: '#b9b7b1', tile: 1 });
+    const S = r.samples, o = side * r.half, parts = new Map();
+    let run = null;
+    const flush = () => { if (run && run.length >= 2) this.kerbStrip(batch, mat, run, side, parts); run = null; };
+    for (let i = 0; i < S.length - 1; i++) {
+      const a = S[i], b = S[i + 1], x = (a.x + b.x) / 2 + a.tz * o, z = (a.z + b.z) / 2 - a.tx * o;
+      if (keep && !keep(x, z, (a.s + b.s) / 2)) { flush(); continue; }
+      if (!run) run = [[a.x + a.tz * o, a.z - a.tx * o, a.tx, a.tz]];
+      run.push([b.x + b.tz * o, b.z - b.tx * o, b.tx, b.tz]);
     }
+    flush();
   }
+  // pts: [x, z, tx, tz] along the kerb line; the strip's road face is on the carriageway side
+  kerbStrip(batch, mat, pts, side) {
+    const pos = [], uv = [], idx = [];
+    let s = 0;
+    pts.forEach(([x, z, tx, tz], i) => {
+      if (i) s += Math.hypot(x - pts[i - 1][0], z - pts[i - 1][1]);
+      const nx = tz * side, nz = -tx * side;                      // away from the road
+      const rx = x - nx * 0.11, rz = z - nz * 0.11, bx = x + nx * 0.11, bz = z + nz * 0.11, gr = G(rx, rz), gb = G(bx, bz);
+      pos.push(rx, gr - 0.09, rz, rx, gr + 0.2, rz, x, (gr + gb) / 2 + 0.215, z, bx, gb + 0.2, bz);
+      uv.push(s, 0, s, 0.3, s, 0.4, s, 0.52);
+      if (i) { const v = i * 4; for (const [a, b] of [[0, 1], [1, 2], [2, 3]]) idx.push(v - 4 + a, v + a, v - 4 + b, v - 4 + b, v + a, v + b); }
+    });
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
+    // outward-facing check: the road face should face the road
+    const n = g.attributes.normal, p0 = pts[0]; const want = [-p0[3] * side, p0[2] * side];
+    if (n.getX(0) * want[0] + n.getZ(0) * want[1] < 0) { const I = g.index.array; for (let i = 0; i < I.length; i += 3) { const t = I[i + 1]; I[i + 1] = I[i + 2]; I[i + 2] = t; } g.computeVertexNormals(); }
+    batch.add(mat, g, { color: '#b9b7b1' });
+  }
+
 
   // Height of the carriageway surface itself (exactly as the road ribbon
   // triangulates it) at distance s along the road, `off` metres to the left.

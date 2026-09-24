@@ -228,8 +228,8 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
     lodT = 0.25; lx = pos.x; lz = pos.z;
     fleet.update(pos);
     for (const m of meshes) {
-      const s = m.geometry.boundingSphere; if (!s) continue;
-      const d = Math.hypot(s.center.x - pos.x, s.center.z - pos.z) - s.radius * 0.55;
+      const c = m.userData.wc; if (!c) continue;
+      const d = Math.hypot(c.x - pos.x, c.z - pos.z) - m.userData.wr * 0.55;
       m.visible = d < (m.userData.detail ? detailRange : m.material === gmat ? farRange + 150 : farRange);
       if (!m.userData.detail && m.material !== gmat) m.castShadow = d < 45; // only nearby chunks draw into the shadow map
     }

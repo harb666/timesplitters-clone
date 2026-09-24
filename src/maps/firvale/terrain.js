@@ -51,7 +51,7 @@ export function groundMaterial(mask, n = 256) {
     sh.uniforms.maskMap = { value: mask.tex }; sh.uniforms.maskRect = { value: new THREE.Vector4(mask.x0, mask.z0, 1 / mask.w, 1 / mask.h) };
     sh.uniforms.yardMap = { value: yard.map }; sh.uniforms.tarMap = { value: tar.map }; sh.uniforms.earthMap = { value: earth.map };
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec4 maskRect; varying vec2 vMaskUv; varying vec2 vWorldXZ;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMaskUv = (position.xz - maskRect.xy) * maskRect.zw; vWorldXZ = position.xz;');
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvec2 wXZ = (modelMatrix * vec4(position, 1.0)).xz; vMaskUv = (wXZ - maskRect.xy) * maskRect.zw; vWorldXZ = wXZ;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D maskMap, yardMap, tarMap, earthMap; varying vec2 vMaskUv; varying vec2 vWorldXZ;')
       .replace('#include <map_fragment>', `
         vec3 m = texture2D(maskMap, vMaskUv).rgb;

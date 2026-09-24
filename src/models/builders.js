@@ -43,30 +43,50 @@ function ensureAttrs(g, color) {
   return g;
 }
 
-export function mergeGeometries(list) {
+// Merged scenery in compact form (phones have little memory, ~19 bytes a
+// vertex instead of 44): positions as 16-bit integers relative to the
+// piece of map (the mesh's position/scale undo it), normals as bytes, tint
+// colours as 16-bit, texture coordinates as half floats (each piece's UVs
+// shifted by whole tiles first so they stay small and precise).
+export function mergeGeometries(list, { compact = true } = {}) {
   let vCount = 0, iCount = 0;
-  for (const g of list) { vCount += g.attributes.position.count; iCount += g.index.count; }
-  const pos = new Float32Array(vCount * 3), nor = new Float32Array(vCount * 3);
-  const uv = new Float32Array(vCount * 2), col = new Float32Array(vCount * 3);
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (const g of list) {
+    vCount += g.attributes.position.count; iCount += g.index.count;
+    const a = g.attributes.position.array;
+    for (let i = 0; i < a.length; i += 3) { const x = a[i], y = a[i + 1], z = a[i + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+  }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2, S = Math.max(x1 - x0, y1 - y0, z1 - z0, 0.01) / 2 * 1.0001;
+  const pos = compact ? new Int16Array(vCount * 3) : new Float32Array(vCount * 3), nor = new Int8Array(vCount * 3);
+  const uv = compact ? new Uint16Array(vCount * 2) : new Float32Array(vCount * 2), col = new Uint16Array(vCount * 3);
   const idx = vCount > 65535 ? new Uint32Array(iCount) : new Uint16Array(iCount);
+  const half = THREE.DataUtils.toHalfFloat;
   let vo = 0, io = 0;
   for (const g of list) {
-    const n = g.attributes.position.count;
-    pos.set(g.attributes.position.array, vo * 3);
-    nor.set(g.attributes.normal.array, vo * 3);
-    uv.set(g.attributes.uv.array, vo * 2);
-    col.set(g.attributes.color.array, vo * 3);
+    const n = g.attributes.position.count, o3 = vo * 3, o2 = vo * 2;
+    const pa = g.attributes.position.array, na = g.attributes.normal.array, ca = g.attributes.color.array, ua = g.attributes.uv.array;
+    for (let i = 0; i < n * 3; i += 3) {
+      if (compact) { pos[o3 + i] = Math.round((pa[i] - cx) / S * 32767); pos[o3 + i + 1] = Math.round((pa[i + 1] - cy) / S * 32767); pos[o3 + i + 2] = Math.round((pa[i + 2] - cz) / S * 32767); }
+      else { pos[o3 + i] = pa[i]; pos[o3 + i + 1] = pa[i + 1]; pos[o3 + i + 2] = pa[i + 2]; }
+    }
+    for (let i = 0; i < n * 3; i++) { nor[o3 + i] = Math.round(Math.max(-1, Math.min(1, na[i])) * 127); col[o3 + i] = Math.round(Math.max(0, Math.min(1, ca[i])) * 65535); }
+    if (compact) {
+      let mu = Infinity, mv = Infinity; for (let i = 0; i < n * 2; i += 2) { if (ua[i] < mu) mu = ua[i]; if (ua[i + 1] < mv) mv = ua[i + 1]; }
+      mu = Math.floor(mu); mv = Math.floor(mv);
+      for (let i = 0; i < n * 2; i += 2) { uv[o2 + i] = half(ua[i] - mu); uv[o2 + i + 1] = half(ua[i + 1] - mv); }
+    } else uv.set(ua, o2);
     const src = g.index.array;
     for (let i = 0; i < src.length; i++) idx[io + i] = src[i] + vo;
     vo += n; io += src.length;
   }
   const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3, compact));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3, true));
+  out.setAttribute('uv', compact ? new THREE.Float16BufferAttribute(uv, 2) : new THREE.BufferAttribute(uv, 2));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
   out.setIndex(new THREE.BufferAttribute(idx, 1));
   out.computeBoundingSphere();
+  out.userData.q = compact ? { cx, cy, cz, S } : null;
   return out;
 }
 
@@ -74,6 +94,7 @@ export function mergeGeometries(list) {
 // map chunk (so the camera only draws nearby chunks). Pieces flagged
 // `detail` go in a separate layer that is hidden beyond DETAIL_RANGE.
 export const CHUNK = 128;
+function dropArray() { this.array = null; }
 export class StaticBatch {
   constructor() { this.groups = new Map(); }
 
@@ -121,8 +142,15 @@ export class StaticBatch {
   build(parent) {
     const meshes = [];
     for (const grp of this.groups.values()) {
-      const mesh = new THREE.Mesh(mergeGeometries(grp.list), grp.material);
-      mesh.matrixAutoUpdate = false;
+      const geo = mergeGeometries(grp.list);
+      // once the GPU has the scenery, drop the JavaScript copy (it's never read back)
+      for (const k in geo.attributes) geo.attributes[k].onUpload(dropArray);
+      geo.index.onUpload(dropArray);
+      const mesh = new THREE.Mesh(geo, grp.material), q = geo.userData.q;
+      if (q) { mesh.position.set(q.cx, q.cy, q.cz); mesh.scale.setScalar(q.S); }
+      mesh.updateMatrix(); mesh.matrixAutoUpdate = false;
+      // world-space bounds for the distance culling
+      const bs = geo.boundingSphere; mesh.userData.wc = bs.center.clone().multiplyScalar(q ? q.S : 1).add(mesh.position); mesh.userData.wr = bs.radius * (q ? q.S : 1);
       mesh.userData.detail = grp.detail;
       parent.add(mesh); meshes.push(mesh);
       grp.list.forEach((g) => g.dispose());

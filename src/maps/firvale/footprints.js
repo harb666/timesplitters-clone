@@ -119,6 +119,9 @@ function localFrame(B) {
 export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, special, miniMartAt, shell }) {
   const R = rng(1904);
   const list = analyse(osm, net, special);
+  // petrol station canopies are mapped as 'buildings': find them (low, open-sided, at a fuel point)
+  const fuel = osm.shops.filter((q) => q[2] === 'petrol');
+  for (const B of list) if (B.b.h && B.b.h < 6 && B.A > 150 && B.A < 700 && fuel.some(([x, z]) => Math.hypot(B.c[0] - x, B.c[1] - z) < 14)) B.type = 'canopy';
   const detailMs = new Mesher(), ms = new Mesher();
   const plots = [], pending = [];
 
@@ -208,7 +211,7 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   for (const B of list) {
     if (B.type === 'res') continue;
     else if (B.type === 'shed') buildBlock(B, ms, batch, M, world, R, { h: 2.6, wall: M.brick, col: '#b9a597', roofCol: '#4a4d52', windows: false });
-    else if (B.type !== 'skip') buildBig(B, ms, batch, M, world, R, net, pending);
+    else if (B.type !== 'skip' && B.type !== 'canopy') buildBig(B, ms, batch, M, world, R, net, pending);
     if (ms.m.size > 40) ms.flush(batch);
     if (detailMs.m.size > 40) detailMs.flush(batch, true);
   }
@@ -235,7 +238,10 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
     shopSpots.push({ x: cx, z: cz, ry, front: [cx + n[0] * 1.8, cz + n[1] * 1.8], cat: m.cat, sign: S.cell, gF: f.y0 });
   }
   const stations = []; for (const [x, z] of petrol) if (!stations.some(([a, b]) => Math.hypot(a - x, b - z) < 40)) stations.push([x, z]);   // (shop + fuel points of one station)
-  for (const [x, z] of stations) petrolStation(batch, M, world, net, x, z);
+  for (const [x, z] of stations) {
+    const can = list.find((B) => B.type === 'canopy' && Math.hypot(B.c[0] - x, B.c[1] - z) < 20);
+    if (can) jetStation(batch, M, world, net, can, list); else petrolStation(batch, M, world, net, x, z);
+  }
   // ---- pass 4: yards and gardens (now every building has its colliders): colliders + data only ----
   for (const B of list) if (B.type === 'res' && B.plots) houseGardens(B, det, M, world, net);
   roadsideBoundaries(list, batch, M, world, net);
@@ -731,6 +737,112 @@ function bigWallNear(list, net, x, z) {
     }
   }
   return best;
+}
+
+// ---- the JET filling station on Owler Lane, built on its real mapped
+// canopy footprint: white canopy on columns with the blue/yellow JET
+// fascia and LED strip, two pump islands, the SPAR shop next door, the
+// four-price pole sign at the road, air & water and the car wash.
+let JETTEX = null;
+function jetTextures() {
+  if (JETTEX) return JETTEX;
+  const cv = (w, h, fn) => { const c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; };
+  const logo = (g, x, y, w, h) => {
+    g.fillStyle = '#ffd100'; const r = h * 0.18;
+    g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.fill();
+    g.fillStyle = '#0a3d91'; g.font = `italic 900 ${h * 0.78}px Arial Black, Arial`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('JET', x + w / 2, y + h * 0.54, w * 0.9);
+  };
+  JETTEX = {
+    // canopy fascia: white, blue lower band, LED line, logo at centre
+    fascia: cv(1024, 64, (g, w, h) => { g.fillStyle = '#f5f6f7'; g.fillRect(0, 0, w, h); g.fillStyle = '#0a3d91'; g.fillRect(0, h * 0.72, w, h * 0.28); g.fillStyle = '#ffd100'; g.fillRect(0, h * 0.66, w, h * 0.06); logo(g, w / 2 - 70, 4, 140, h * 0.6); }),
+    // price pole: logo on top, four prices in LED digits
+    pole: cv(256, 512, (g, w, h) => {
+      g.fillStyle = '#0a3d91'; g.fillRect(0, 0, w, h); logo(g, 18, 16, w - 36, 90);
+      const rows = [['Unleaded', '139.9'], ['Super Unl', '154.9'], ['Diesel', '146.9'], ['Premium D', '162.9']];
+      rows.forEach(([n, p], i) => { const y = 130 + i * 92; g.fillStyle = '#111'; g.fillRect(14, y, w - 28, 80); g.fillStyle = '#fff'; g.font = 'bold 20px Arial'; g.textAlign = 'left'; g.fillText(n, 24, y + 26); g.fillStyle = '#ffb000'; g.font = 'bold 44px Courier New, monospace'; g.textAlign = 'right'; g.fillText(p, w - 22, y + 68); });
+    }),
+    // pump header
+    pump: cv(256, 64, (g, w, h) => { g.fillStyle = '#0a3d91'; g.fillRect(0, 0, w, h); logo(g, w / 2 - 50, 8, 100, h - 16); }),
+    // SPAR shop fascia
+    spar: cv(512, 64, (g, w, h) => { g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h); g.fillStyle = '#00843d'; g.fillRect(0, h - 12, w, 12); g.fillStyle = '#e30613'; g.fillRect(0, h - 18, w, 6); g.fillStyle = '#e30613'; g.font = 'bold 40px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('SPAR', w / 2, h * 0.42); g.fillStyle = '#00843d'; g.beginPath(); g.moveTo(w / 2 - 80, h * 0.7); g.lineTo(w / 2 - 68, h * 0.12); g.lineTo(w / 2 - 56, h * 0.7); g.fill(); }),
+    wash: cv(256, 64, (g, w, h) => { g.fillStyle = '#0a3d91'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.font = 'bold 30px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('CAR WASH', w / 2, h / 2); }),
+  };
+  JETTEX.mat = {}; for (const k of ['fascia', 'pole', 'pump', 'spar', 'wash']) JETTEX.mat[k] = new THREE.MeshStandardMaterial({ map: JETTEX[k], roughness: 0.45, emissive: 0xffffff, emissiveMap: JETTEX[k], emissiveIntensity: 0.25, name: 'jet-' + k });
+  return JETTEX;
+}
+function jetStation(batch, M, world, net, B, list) {
+  const T = jetTextures(), o = B.o, H = B.b.h || 4.7;
+  // long axis along Owler Lane; v points away from the road
+  const r = net.nearestStreet(o.cx, o.cz);
+  let ux = o.ux, uz = o.uz, vx = o.vx, vz = o.vz;
+  if (r && (o.cx - r.px) * vx + (o.cz - r.pz) * vz < 0) { vx = -vx; vz = -vz; ux = -ux; uz = -uz; }
+  const ry = Math.atan2(-vx, -vz);                       // local +Z faces the road
+  let gMin = Infinity; for (const [x, z] of B.P) gMin = Math.min(gMin, G(x, z));
+  const g0 = G(o.cx, o.cz);
+  const f = new Frame(batch, o.cx, o.cz, ry, g0), hu = o.hu, hv = o.hv;
+  const fq = (mat, w, h, x, y, z, rot = 0) => f.geo(mat, new THREE.PlaneGeometry(w, h), x, y, z, { ry: rot, color: '#ffffff' });
+  // forecourt: concrete slab under the canopy and out to the road
+  batch.add(M.pave, new THREE.PlaneGeometry(hu * 2 + 8, hv * 2 + 10).rotateX(-Math.PI / 2), { x: o.cx - vx * 1, y: g0 + 0.06, z: o.cz - vz * 1, ry, color: '#b9b8b3' });
+  // canopy: deck, white soffit, fascia all round with the branding
+  f.box(M.cladding, 0, H - 0.45, 0, hu * 2, 0.9, hv * 2, { color: '#f2f3f4', tile: 3 });
+  for (const [w, x, z, rot] of [[hu * 2, 0, hv + 0.012, 0], [hu * 2, 0, -hv - 0.012, Math.PI], [hv * 2, hu + 0.012, 0, Math.PI / 2], [hv * 2, -hu - 0.012, 0, -Math.PI / 2]]) fq(T.mat.fascia, w, 0.9, x, H - 0.45, z, rot);
+  for (let i = -2; i <= 2; i++) for (const zz of [-hv / 2, hv / 2]) f.box(M.lampHead, i * hu / 2.6, H - 0.93, zz, 1.2, 0.04, 0.5, { color: '#ffffff', detail: true });
+  // two pump islands along the canopy, a column in each, three dispensers each
+  for (const zz of [-hv * 0.42, hv * 0.42]) {
+    f.box(M.dressed, 0, 0.1, zz, hu * 1.5, 0.22, 1.3, { color: '#cfcfca' });
+    for (const x of [-hu * 0.75, hu * 0.75]) { f.box(M.metal, x, 0.4, zz, 0.18, 0.8, 0.18, { color: '#ffd100' }); }      // bollards
+    f.box(M.metal, 0, H / 2, zz, 0.45, H, 0.45, { color: '#dfe1e3' });                                            // column
+    const [cx, cz] = f.world(0, zz); world.addBox(cx - 0.3, cx + 0.3, g0 - 1, g0 + H, cz - 0.3, cz + 0.3, 'pole');
+    for (const x of [-hu * 0.5, hu * 0.5]) {
+      f.box(M.metal, x, 1.0, zz, 1.1, 1.8, 0.55, { color: '#e9ebed' });                                         // dispenser body
+      f.box(M.darkMetal, x, 0.28, zz, 1.14, 0.4, 0.58, { color: '#2a2d31' });                                    // plinth
+      for (const sd of [-1, 1]) {
+        fq(T.mat.pump, 1.1, 0.28, x, 1.78, zz + sd * 0.281, sd > 0 ? 0 : Math.PI);                               // header
+        f.box(M.darkMetal, x, 1.3, zz + sd * 0.29, 0.5, 0.36, 0.02, { color: '#0d0e10' });                        // screen
+        for (const [nx, col] of [[-0.35, '#1e8e3e'], [0, '#1a1a1a'], [0.35, '#0a3d91']]) f.box(M.plastic, x + nx, 0.95, zz + sd * 0.3, 0.1, 0.18, 0.06, { color: col, detail: true });   // nozzles
+      }
+      const [px, pz] = f.world(x, zz); world.addOBB(px, pz, 0.6, 0.35, ry, g0 - 1, g0 + 1.9, 'pump');
+    }
+    const [ix, iz] = f.world(0, zz); world.addOBB(ix, iz, hu * 0.75, 0.65, ry, g0 - 1, g0 + 0.3, 'island');
+  }
+  // four-price pole sign at the road edge, by the entrance
+  const [sx, sz] = f.world(hu + 1.5, hv + 3.5), sg = G(sx, sz);
+  const pf = new Frame(batch, sx, sz, ry, sg);
+  pf.box(M.darkMetal, 0, 2.7, 0, 1.5, 5.4, 0.35, { color: '#0a3d91' });
+  for (const sd of [1, -1]) pf.geo(T.mat.pole, new THREE.PlaneGeometry(1.4, 2.8), 0, 3.8, sd * 0.18, { ry: sd > 0 ? 0 : Math.PI, color: '#ffffff' });
+  world.addOBB(sx, sz, 0.75, 0.2, ry, sg - 1, sg + 5.4, 'sign');
+  // air & water machine at the far end of the forecourt
+  const [ax, az] = f.world(hu + 1.8, -hv + 1.5);
+  const af = new Frame(batch, ax, az, ry, G(ax, az));
+  af.box(M.plastic, 0, 0.8, 0, 0.6, 1.6, 0.45, { color: '#0a3d91' }); af.box(M.plastic, 0, 1.25, 0.23, 0.45, 0.35, 0.01, { color: '#ffd100' });
+  // car wash: a roll-over bay behind the forecourt
+  const [wx, wz] = f.world(hu + 4.5, -hv - 6), wg = G(wx, wz);
+  if (!world.near(wx, wz, 6, []).some((b) => b.tag === 'building')) {
+    const wf = new Frame(batch, wx, wz, ry + Math.PI / 2, wg);
+    for (const sd of [-1, 1]) wf.box(M.cladding, sd * 2.4, 1.9, 0, 0.25, 3.8, 9, { color: '#e9ebee', tile: 3 });
+    wf.box(M.cladding, 0, 3.9, 0, 5.1, 0.35, 9, { color: '#e9ebee', tile: 3 });
+    for (const sd of [-1, 1]) wf.geo(T.mat.wash, new THREE.PlaneGeometry(4.4, 1.1), 0, 3.3, sd * 4.52, { ry: sd > 0 ? 0 : Math.PI, color: '#ffffff' });
+    wf.box(M.plastic, 0, 1.6, 0, 3.6, 3.2, 0.5, { color: '#1c5fb8' });                                           // the brush gantry
+    for (const sd of [-1, 1]) { const [cx, cz] = wf.world(sd * 2.4, 0); world.addOBB(cx, cz, 0.15, 4.5, ry + Math.PI / 2, wg - 1, wg + 4, 'building'); }
+  }
+  // SPAR sign on the shop next door (its wall facing the road)
+  const shop = list.find((q) => q !== B && q.type === 'big' && Math.hypot(q.c[0] - o.cx, q.c[1] - o.cz) < 30);
+  if (shop) {
+    const P = shop.P, s = shop.ccw ? 1 : -1; let best = null;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 4) continue;
+      const n = [(b[1] - a[1]) / L * s, -(b[0] - a[0]) / L * s], face = n[0] * -vx + n[1] * -vz;
+      if (!best || face > best.face) best = { a, b, n, L, face };
+    }
+    if (best && best.face > 0.5) {
+      const m = [(best.a[0] + best.b[0]) / 2 + best.n[0] * 0.05, (best.a[1] + best.b[1]) / 2 + best.n[1] * 0.05], sgy = G(m[0] + best.n[0], m[1] + best.n[1]);
+      const sf = new Frame(batch, m[0], m[1], Math.atan2(best.n[0], best.n[1]), sgy), W = Math.min(best.L - 1, 12);
+      sf.geo(T.mat.spar, new THREE.PlaneGeometry(W, 1.1), 0, (shop.b.h || 5.8) - 1.0, 0.02, { color: '#ffffff' });
+      sf.box(M.glass, 0, 1.3, 0.03, W - 1, 2.4, 0.04, { color: '#ffffff' });                                     // glazed shop front
+      sf.box(M.darkMetal, 0, 1.3, 0.05, 1.6, 2.2, 0.03, { color: '#3a3d40' });                                   // sliding doors
+    }
+  }
 }
 
 // Petrol station forecourt: canopy on four columns, two pump islands, a

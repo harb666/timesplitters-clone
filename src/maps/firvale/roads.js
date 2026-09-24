@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { groundHeight as G } from '../../core/world.js';
 import { CHUNK } from '../../models/builders.js';
+import { triangulate } from './geom.js';
 
 // Street classes: carriageway width, pavement width, rendering kind.
 // kind: a = A-road, b = B/C road, r = residential, s = service lane/back
@@ -171,6 +172,7 @@ export class RoadNetwork {
 
   // ------------------------------------------------------------ geometry
   build(batch, M) {
+    const corners = this.corners(), cut = corners.cut;
     const roads = [...this.roads].sort((a, b) => RANK[a.kind] - RANK[b.kind]);
     roads.forEach((r, rank) => {
       const lift = 0.02 + RANK[r.kind] * 0.012 + (rank % 7) * 0.0015; // higher roads draw over lower ones at junctions
@@ -182,13 +184,90 @@ export class RoadNetwork {
       this.ribbon(batch, M.road, r, -r.half, r.half, lift, 4, r.kind === 's' ? '#d8d4ce' : '#ffffff', null);
       if (r.pave > 0) for (const side of [1, -1]) {
         const inner = side > 0 ? r.half : -r.half - r.pave, outer = side > 0 ? r.half + r.pave : -r.half;
-        const keep = (x, z) => !this.onCarriageway(x, z, r, 0.3);
+        const ca = cut.get(r.id + ':a:' + side) || 0, cb = cut.get(r.id + ':b:' + side) || 0;
+        // (trimmed back where a rounded corner takes over at a junction)
+        const keep = (x, z, sm) => !this.onCarriageway(x, z, r, 0.3) && !(sm !== undefined && (sm < ca || sm > r.length - cb));
         this.ribbon(batch, M.pave, r, inner, outer, 0.15, 1.8, '#ffffff', keep, r.kind === 'r' ? (M.paveTar || M.road) : null);
         this.kerb(batch, M.kerb, r, side, keep);
       }
       if (r.kind !== 's') this.markings(batch, M.line, r);
       this.furniture(batch, M, r);
     });
+    this.buildCorners(batch, M, corners.list);
+  }
+
+  // Rounded kerbs at junction corners: for each pair of neighbouring streets
+  // at a junction, a kerb radius (≈4 m on side streets, 6 m on main roads)
+  // tangent to both kerb lines; the pavement follows the curve and the road
+  // surface fills the corner it cuts off.
+  corners() {
+    const cut = new Map(), list = [];
+    const X = (p, d, q, e) => { const den = d[0] * e[1] - d[1] * e[0]; if (Math.abs(den) < 1e-6) return null; const t = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / den; return [p[0] + d[0] * t, p[1] + d[1] * t]; };
+    for (const node of this.nodes.values()) {
+      const legs = [];
+      for (const e of node.roads) {
+        const r = e.road; if (!DRIVABLE.has(r.kind) || r.length < 10) continue;
+        const S = r.samples, P0 = e.end === 'a' ? S[0] : S[S.length - 1], q = this.pointAt(r, e.end === 'a' ? Math.min(6, r.length / 2) : Math.max(r.length - 6, r.length / 2), 0, {});
+        let ox = q.x - P0.x, oz = q.z - P0.z; const L = Math.hypot(ox, oz) || 1; ox /= L; oz /= L;
+        legs.push({ r, end: e.end, P: [P0.x, P0.z], o: [ox, oz], ang: Math.atan2(oz, ox) });
+      }
+      if (legs.length < 2) continue;
+      legs.sort((a, b) => a.ang - b.ang);
+      for (let i = 0; i < legs.length; i++) {
+        const A = legs[i], B = legs[(i + 1) % legs.length];
+        if (legs.length === 2 && i === 1) break;
+        let th = B.ang - A.ang; if (th <= 0) th += Math.PI * 2;
+        if (th < 0.6 || th > 2.6) continue;                                   // straight on, or too sharp
+        const pA = A.r.pave, pB = B.r.pave; if (pA <= 0.5 || pB <= 0.5) continue;
+        const nA = [-A.o[1], A.o[0]], nB = [B.o[1], -B.o[0]];                  // normals into the corner
+        const sideA = A.end === 'a' ? -1 : 1, sideB = B.end === 'a' ? 1 : -1;
+        const hA = A.r.half, hB = B.r.half, sn = Math.sin(th / 2);
+        const p = Math.min(pA, pB);
+        let R = A.r.kind === 'r' && B.r.kind === 'r' ? 4 : 6; R = Math.min(R, 0.85 * p / Math.max(0.05, 1 - sn));
+        if (R < 1.2) continue;
+        const off = (P, n, d) => [P[0] + n[0] * d, P[1] + n[1] * d];
+        const O = X(off(A.P, nA, hA + R), A.o, off(B.P, nB, hB + R), B.o); if (!O) continue;
+        const Ta = off(O, nA, -R), Tb = off(O, nB, -R);
+        const tA = (Ta[0] - A.P[0]) * A.o[0] + (Ta[1] - A.P[1]) * A.o[1], tB = (Tb[0] - B.P[0]) * B.o[0] + (Tb[1] - B.P[1]) * B.o[1];
+        if (tA < 0.3 || tB < 0.3 || tA > A.r.length * 0.45 || tB > B.r.length * 0.45) continue;
+        const C = X(off(A.P, nA, hA), A.o, off(B.P, nB, hB), B.o), Co = X(off(A.P, nA, hA + pA), A.o, off(B.P, nB, hB + pB), B.o);
+        if (!C || !Co || Math.hypot(Co[0] - O[0], Co[1] - O[1]) > R - 0.1) continue;
+        const kA = A.r.id + ':' + A.end + ':' + sideA, kB = B.r.id + ':' + B.end + ':' + sideB;
+        cut.set(kA, Math.max(cut.get(kA) || 0, tA)); cut.set(kB, Math.max(cut.get(kB) || 0, tB));
+        // arc from Ta to Tb round O (the short way)
+        let a0 = Math.atan2(Ta[1] - O[1], Ta[0] - O[0]), a1 = Math.atan2(Tb[1] - O[1], Tb[0] - O[0]), da = a1 - a0;
+        while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
+        const arc = []; const n = Math.max(4, Math.ceil(Math.abs(da) * R / 0.6));
+        for (let k = 0; k <= n; k++) { const a = a0 + da * k / n; arc.push([O[0] + Math.cos(a) * R, O[1] + Math.sin(a) * R]); }
+        list.push({ A, B, arc, C, Co, TaO: off(Ta, nA, pA), TbO: off(Tb, nB, pB), lift: 0.02 + Math.max(RANK[A.r.kind], RANK[B.r.kind]) * 0.012 + 0.009, tar: A.r.kind === 'r' && B.r.kind === 'r' });
+      }
+    }
+    return { cut, list };
+  }
+
+  buildCorners(batch, M, list) {
+    const fill = (mat, P, lift, tile, color) => {
+      const T = triangulate(P); if (!T.length) return;
+      const pos = [], uv = [], idx = [];
+      for (const [x, z] of P) { pos.push(x, G(x, z) + lift, z); uv.push(x / tile, z / tile); }
+      for (const [a, b, c] of T) {
+        const A = P[a], B = P[b], C = P[c], up = (B[1] - A[1]) * (C[0] - A[0]) - (B[0] - A[0]) * (C[1] - A[1]);
+        up >= 0 ? idx.push(a, b, c) : idx.push(a, c, b);
+      }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
+      batch.add(mat, g, { color });
+    };
+    for (const c of list) {
+      // pavement: between the curved kerb and the outer edges
+      fill(c.tar ? (M.paveTar || M.road) : M.pave, [...c.arc, c.TbO, c.Co, c.TaO], 0.15, 1.8, '#ffffff');
+      // road surface in the corner the curve cuts off
+      fill(M.road, [c.C, ...[...c.arc].reverse()], c.lift, 4, '#ffffff');
+      // curved kerb
+      for (let k = 0; k + 1 < c.arc.length; k++) {
+        const [ax, az] = c.arc[k], [bx, bz] = c.arc[k + 1], ga = G(ax, az), gb = G(bx, bz);
+        batch.sloped(M.kerb, ax, az, bx, bz, 0.22, ga - 0.09, gb - 0.09, ga + 0.21, gb + 0.21, { color: '#b9b7b1', tile: 1 });
+      }
+    }
   }
 
   // Road-surface detail: gully grates along the kerbs, manhole covers,
@@ -216,7 +295,7 @@ export class RoadNetwork {
     for (let i = 0; i < S.length - 1; i++) {
       const a = S[i], b = S[i + 1];
       const mo = (o0 + o1) / 2, mx = (a.x + b.x) / 2 + (a.tz + b.tz) / 2 * mo, mz = (a.z + b.z) / 2 - (a.tx + b.tx) / 2 * mo;
-      if (keep && !keep(mx, mz)) continue;
+      if (keep && !keep(mx, mz, (a.s + b.s) / 2)) continue;
       const ck = Math.floor(mx / CHUNK) + ',' + Math.floor(mz / CHUNK);
       let P = parts.get(ck); if (!P) { P = { pos: [], uv: [], idx: [], vi: 0 }; parts.set(ck, P); }
       for (const [p, o] of [[a, o0], [a, o1], [b, o0], [b, o1]]) {
@@ -240,7 +319,7 @@ export class RoadNetwork {
     for (let i = 0; i < S.length - 1; i += 1) {
       const a = S[i], b = S[i + 1];
       const x = (a.x + b.x) / 2 + a.tz * o, z = (a.z + b.z) / 2 - a.tx * o;
-      if (keep && !keep(x, z)) continue;
+      if (keep && !keep(x, z, (a.s + b.s) / 2)) continue;
       const ax = a.x + a.tz * o, az = a.z - a.tx * o, bx = b.x + b.tz * o, bz = b.z - b.tx * o, ga = G(ax, az), gb = G(bx, bz);
       batch.sloped(mat, ax, az, bx, bz, 0.22, ga - 0.09, gb - 0.09, ga + 0.21, gb + 0.21, { color: '#b9b7b1', tile: 1 });
     }

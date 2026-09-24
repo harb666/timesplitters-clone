@@ -54,6 +54,7 @@ function makeMaterials(quality) {
     brick: set(PB.brickPBR(n), { normalScale: new THREE.Vector2(1.2, 1.2) }),
     render: set(PB.polymerSet(256, { base: [200, 198, 190], seed: 91, stipple: 1.2 })),
     stone: set(PB.stonePBR(256)),
+    dressed: set(PB.dressedPBR(256)),
     ashlar: set(PB.stonePBR(256)),
     slate: set(PB.slatePBR(256)),
     tile: set(PB.slatePBR(256)),
@@ -87,7 +88,7 @@ function makeMaterials(quality) {
   // tarmac footways: the same asphalt, but worn paler and finer than the carriageway
   M.paveTar = M.road.clone(); M.paveTar.color.setRGB(1.3, 1.28, 1.24); M.paveTar.normalScale = new THREE.Vector2(0.45, 0.45);
   for (const k in M) if (!M[k].name) M[k].name = k;
-  M.kerb = M.stone; M.ashlar = M.stone; M.tile = M.slate; M.bark = M.wood; M.roadFlat = M.road;
+  M.kerb = M.dressed; M.ashlar = M.stone; M.tile = M.slate; M.bark = M.wood; M.roadFlat = M.road;
   return { M, signs };
 }
 

@@ -31,6 +31,7 @@ export function landMask(osm, residential, all = []) {
     g.strokeStyle = g.fillStyle = 'rgb(40,10,0)';
     path(B.P); g.lineWidth = wide * S; g.stroke(); g.fill();
     if (B.yards) for (const Y of B.yards) { path(Y); g.lineWidth = 1; g.fill(); g.stroke(); }
+    if (B.forecourts) for (const Y of B.forecourts) { path(Y); g.lineWidth = 1; g.fill(); g.stroke(); }
   }
   // gardens round the semis/detached houses of the estates
   for (const B of residential) if (B.modern) { path(B.P); g.strokeStyle = 'rgb(215,15,0)'; g.lineWidth = 18 * S; g.stroke(); }

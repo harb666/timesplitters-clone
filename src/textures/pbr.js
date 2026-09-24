@@ -221,6 +221,17 @@ export function brickPBR(n = 512) {
   });
 }
 
+// Dressed (sawn) sandstone / concrete: sills, lintels, copings, kerbs.
+// Fine speckled grain, faint weathering, no joints.
+export function dressedPBR(n = 256) {
+  return cached('dressed' + n, () => buildSet(n, (u, v) => {
+    const g = fbm(u, v, { freq: 64, oct: 3, seed: 31 }), w = fbm(u, v, { freq: 6, oct: 3, seed: 32 });
+    const speck = (Math.sin(u * 2113.1 + v * 977.7) * 43758.5) % 1;
+    const c = 0.86 + g * 0.16 - w * 0.1 + (Math.abs(speck) > 0.93 ? -0.12 : 0);
+    return { r: 214 * c, g: 206 * c, b: 190 * c, rough: 0.85, h: g * 0.6 + w * 0.2 };
+  }, 1.2));
+}
+
 export function stonePBR(n = 256) {
   return cached('stone' + n, () => {
     const r = rng(9); const blocks = [];

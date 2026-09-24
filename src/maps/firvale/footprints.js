@@ -66,6 +66,8 @@ function analyse(osm, net, special) {
     else if (SHED.has(cls) || (!cls && Math.abs(A) < 22)) type = 'shed';
     else if (RES.has(cls) && !(cls === 'apartments' && Math.abs(A) > 500)) type = 'res';
     else if (!cls && (o.hv * 2 <= 13 && fill > 0.55) && Math.abs(A) < 1400) type = 'res';
+    // long rows one house deep (terraces drawn as a single outline, with rear outriggers)
+    else if ((!cls || cls === 'building') && o.hv * 2 <= 17.5 && o.hu * 2 >= 20 && o.hu / o.hv > 2.6 && fill > 0.5) type = 'res';
     else if (!cls && Math.abs(A) < 160) type = 'res';
     else type = 'big';
     // orientation: outward normal test so walls face out
@@ -76,13 +78,18 @@ function analyse(osm, net, special) {
       const sides = [[o.vx, o.vz, o.hv, o.hu], [-o.vx, -o.vz, o.hv, o.hu], [o.ux, o.uz, o.hu, o.hv], [-o.ux, -o.uz, o.hu, o.hv]];
       let best = null;
       for (const [nx, nz, dist, along] of sides) {
-        const tx = nz, tz = -nx; let score = 0, k = 0;
+        const tx = nz, tz = -nx; let score = 0, k = 0, main = 0;
         for (const f of [-0.6, 0, 0.6]) {
           const x = o.cx + nx * (dist + 3) + tx * along * f, z = o.cz + nz * (dist + 3) + tz * along * f;
           const r = net.nearestStreet(x, z);
           score += r ? Math.max(0, r.dist - r.road.half - r.road.pave) : 40; k++;
+          // is that street a main road running alongside this side of the row?
+          if (r && (r.road.kind === 'a' || r.road.kind === 'b') && r.dist - r.road.half - r.road.pave < 22 && Math.abs(r.tx * tx + r.tz * tz) > 0.8) main++;
         }
         score /= k;
+        // the terraces along Firth Park Road, Barnsley Road, Page Hall Road,
+        // Herries Road... face the main road, even with a back street nearer
+        if (main >= 2 && along >= 3.6) score -= 14;
         if (along < 3.6 && (sides[0][3] > 9)) score += 8;    // short end of a long terrace: rarely the front
         if (!best || score < best.score) best = { nx, nz, dist, along, score };
       }
@@ -92,7 +99,7 @@ function analyse(osm, net, special) {
       let n = Math.max(1, Math.round(len / pw));
       if (len / n < 3.6) n = Math.max(1, Math.floor(len / 3.6));
       B.nPlots = n;
-      B.storeys = b.l ? Math.min(4, b.l) : b.h ? Math.max(1, Math.min(4, Math.round((b.h - 2.5) / 2.9))) : cls === 'apartments' ? 3 : 2;
+      B.storeys = b.l ? Math.min(4, b.l) : b.h ? Math.max(cls === 'bungalow' ? 1 : 2, Math.min(4, Math.round((b.h - 2.5) / 2.9))) : cls === 'apartments' ? 3 : cls === 'bungalow' ? 1 : 2;   // (estimated heights run low: houses here are two-storey)
     }
     out.push(B);
   });
@@ -135,10 +142,13 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
       let piece = clip(L, (p) => p[0] - a0 + (k === 0 ? 1 : 0));
       piece = clip(piece, (p) => a1 - p[0] + (k === B.nPlots - 1 ? 1 : 0));
       if (piece.length < 3 || Math.abs(area(piece)) < 3) continue;
-      const fm = F.toW((a0 + a1) / 2, dMax);
+      // each house's own front (long terraces follow curving roads, so the
+      // row's frontmost point says little about any one house)
+      const pdMax = Math.max(...piece.map(([, d]) => d));
+      const fm = F.toW((a0 + a1) / 2, pdMax);
       const gF = G(fm[0], fm[1]);
-      const pl = { B, k, a0, a1, w, piece, gF, front: fm, shop: null, mirror: k % 2 === 1 };
-      pl.hasFront = piece.some(([, d]) => d > dMax - 0.35);
+      const pl = { B, k, a0, a1, w, piece, gF, front: fm, shop: null, mirror: k % 2 === 1, dMax: pdMax };
+      pl.hasFront = pdMax > dMax - 6;
       B.plots.push(pl); plots.push(pl);
     }
   }
@@ -219,6 +229,8 @@ export function buildFootprints(batch, M, world, net, osm, { signs, shopCells, s
   const RY = rng(77);
   for (const B of list) if (B.type === 'res' && !B.modern && B.plots) backYards(B, batch, M, world, net, RY);
   for (const B of list) if (B.type === 'res' && B.modern && B.plots) rearGardens(B, batch, M, world, net);
+  const RG = rng(4242);
+  for (const B of list) if (B.type === 'res' && B.plots) frontGardens(B, batch, M, world, net, RG);
   roadsideBoundaries(list, batch, M, world, net);
   BOUND.clear();
   const residential = list.filter((b) => b.type === 'res');
@@ -230,10 +242,12 @@ function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots)
   const F = B.F, { dMax, Dm, dR, rise } = B, dOut = dMax - Dm;
   const n2 = [F.nx, F.nz], back = [-F.nx, -F.nz];
   const eaveH = B.storeys * FLOOR + 0.45;
-  const renderRow = !B.modern && R() < 0.1;
+  const renderRow = !B.modern && B.nPlots <= 6 && R() < 0.1;   // (long Victorian rows are red brick; the odd house is rendered)
   let maxTop = -Infinity, minG = Infinity;
   B.plots.forEach((pl, idx) => {
     const { piece, gF } = pl;
+    // roof lines from this house's own front (see pass 1)
+    const dMax = pl.dMax ?? B.dMax, dR = dMax - Dm / 2, dOut = dMax - Dm;
     const rendered = renderRow || (!pl.shop && !B.modern && R() < 0.08);
     const wallMat = rendered ? M.render : M.brick, tint = rendered ? RENDER[(R() * RENDER.length) | 0] : B.tint, wtile = rendered ? 2 : 1.3;
     const eave = gF + eaveH + (pl.shop ? 0.3 : 0), ridge = eave + rise;
@@ -325,7 +339,7 @@ function buildResidential(B, ms, dms, batch, M, world, net, R, signs, shopSpots)
       const f = new Frame(batch, ...W(pl.a0 + (pl.k === 0 ? 0.5 : 0), dR - 0.2), Math.atan2(F.nx, F.nz), 0);
       f.y0 = ridge - 0.6;
       f.box(wallMat, 0, 0.8, 0, 0.8, 1.9, 1.3, { tile: wtile, color: tint });
-      f.box(M.stone, 0, 1.8, 0, 0.9, 0.12, 1.4, { color: '#b8ae9c', detail: true });
+      f.box(M.dressed, 0, 1.8, 0, 0.9, 0.12, 1.4, { color: '#b8ae9c', detail: true });
       for (const dz of [-0.35, 0.05, 0.4]) if (R() < 0.75) f.box(M.clay, 0, 2.05, dz, 0.2, 0.4, 0.2, { color: '#b35a3a', detail: true });
       if (R() < 0.2) { f.box(M.metal, 0, 2.6, 0, 0.03, 1.4, 0.03, { detail: true }); f.box(M.metal, 0, 3.1, 0, 0.7, 0.03, 0.03, { detail: true }); }
     }
@@ -370,7 +384,7 @@ function backYards(B, batch, M, world, net, R) {
     const segs = [[-W / 2, gx - gw / 2], [gx + gw / 2, W / 2]];
     for (const [a, b] of segs) if (b - a > 0.1) {
       f.run(M.brick, -b, -a, 0, 0.22, -0.4, wh, { tile: 1.3, color: col, detail: true });
-      f.run(M.stone, -b - 0.01, -a + 0.01, 0, 0.3, wh - 0.01, wh + 0.07, { color: '#b9ae9a', detail: true });
+      f.run(M.dressed, -b - 0.01, -a + 0.01, 0, 0.3, wh - 0.01, wh + 0.07, { color: '#b9ae9a', detail: true });
     }
     f.run(M.wood, -gx - gw / 2, -gx + gw / 2, -0.02, 0.06, 0.03, wh * 0.9, { color: ['#3d5a3a', '#5a3b2a', '#2f3e5c', '#6b6b6b'][(R() * 4) | 0], detail: true });
     noteBound(...f.world(-W / 2, 0), ...f.world(W / 2, 0));
@@ -415,72 +429,54 @@ function facade(batch, M, F, pl, B, R, eave, wallMat, tint, net, signs, shopSpot
   const eH = eave - pl.gF;
   const win = (lx, ly, w, h, vv) => {
     f.geo(M.win, atlasQuad(w, h, vv * 0.25 + 0.004, 0, vv * 0.25 + 0.246, 1), lx, ly, D + 0.025);
-    f.box(M.stone, lx, ly + h / 2 + 0.1, D + 0.05, w + 0.3, 0.2, 0.12, { tile: 1, color: '#d6cbb5', detail: true });
-    f.box(M.stone, lx, ly - h / 2 - 0.06, D + 0.08, w + 0.24, 0.1, 0.2, { tile: 1, color: '#d6cbb5', detail: true });
+    f.box(M.dressed, lx, ly + h / 2 + 0.1, D + 0.05, w + 0.3, 0.2, 0.12, { tile: 1, color: '#d6cbb5', detail: true });
+    f.box(M.dressed, lx, ly - h / 2 - 0.06, D + 0.08, w + 0.24, 0.1, 0.2, { tile: 1, color: '#d6cbb5', detail: true });
   };
   // ginnel: the covered passage through the terrace to the back yards, on the
   // party wall between every other pair of houses (dark opening, brick arch)
   if (!B.modern && !pl.shop && pl.k > 0 && pl.k % 4 === 2 && B.nPlots > 3) {
     const gx = -W / 2;
     f.box(M.door, gx, 1.05, D + 0.012, 0.9, 2.1, 0.02, { color: '#0d0d0e' });
-    f.box(M.stone, gx, 2.22, D + 0.05, 1.3, 0.24, 0.1, { color: '#cdbfa6', detail: true });
-    f.box(M.stone, gx, 2.36, D + 0.06, 0.28, 0.2, 0.12, { color: '#d9ccb4', detail: true });          // keystone
+    f.box(M.dressed, gx, 2.22, D + 0.05, 1.3, 0.24, 0.1, { color: '#cdbfa6', detail: true });
+    f.box(M.dressed, gx, 2.36, D + 0.06, 0.28, 0.2, 0.12, { color: '#d9ccb4', detail: true });          // keystone
   }
   // gutter + downpipe
   f.box(M.darkMetal, 0, eH - 0.05, D + 0.12, W, 0.12, 0.14, { color: '#1c1c1c', detail: true });
   if (pl.k % 2) f.box(M.darkMetal, W / 2 - 0.08, eH / 2, D + 0.06, 0.08, eH, 0.08, { color: '#1c1c1c', detail: true });
   // plinth
-  f.box(M.stone, 0, 0.1, D + 0.02, W, 0.5, 0.06, { tile: 1, color: '#cfc3ad', detail: true });
+  f.box(M.dressed, 0, 0.1, D + 0.02, W, 0.5, 0.06, { tile: 1, color: '#cfc3ad', detail: true });
   const upper = (y) => { if (y + 0.7 > eH) return; win(W > 4.4 ? 0.95 * m : 0, y, 1.2, 1.35, (v + 1) % 4); if (W > 4.6) win(-(W / 2 - 1.0) * m, y, 0.8, 1.3, (v + 2) % 4); };
   if (!pl.shop) {
     const dx = -(W / 2 - 0.85) * m;
     f.box(M.door, dx, 1.2, D + 0.01, 0.95, 2.1, 0.1, { color: DOORS[(R() * DOORS.length) | 0] });
     f.geo(M.win, atlasQuad(0.95, 0.35, 0.26, 0.05, 0.49, 0.3), dx, 2.48, D + 0.03);
-    f.box(M.stone, dx, 2.78, D + 0.04, 1.3, 0.22, 0.14, { color: '#d6cbb5', detail: true });
-    f.box(M.stone, dx, 0.1, D + 0.28, 1.2, 0.22, 0.5, { tile: 1, color: '#bfb6a4' });
+    f.box(M.dressed, dx, 2.78, D + 0.04, 1.3, 0.22, 0.14, { color: '#d6cbb5', detail: true });
+    f.box(M.dressed, dx, 0.1, D + 0.28, 1.2, 0.22, 0.5, { tile: 1, color: '#bfb6a4' });
     const bx = W > 4.2 ? 0.95 * m : 0.4 * m;
-    if (!B.modern && W > 4.2 && R() < 0.5) {
-      const bw = 1.5, proj = 0.65;
-      f.box(M.stone, bx, 0.45, D + proj / 2, bw + 0.9, 0.9, proj, { tile: 1, color: '#cdc2ad' });
-      f.geo(M.win, atlasQuad(bw, 1.5, v * 0.25 + 0.004, 0, v * 0.25 + 0.246, 1), bx, 1.65, D + proj + 0.01);
-      for (const sd of [-1, 1]) f.geo(M.win, atlasQuad(0.65, 1.5, v * 0.25 + 0.05, 0, v * 0.25 + 0.2, 1), bx + sd * (bw / 2 + 0.2), 1.65, D + proj / 2, { ry: sd * 0.78 });
-      f.box(M.stone, bx, 2.5, D + proj / 2, bw + 0.95, 0.18, proj + 0.1, { color: '#d6cbb5' });
-      f.box(M.slate, bx, 2.66, D + proj / 2 - 0.05, bw + 0.9, 0.14, proj, { color: '#6e737a', rx: -0.3 });
+    // the big c.1900-1910 terraces on the main roads (Firth Park Road, Barnsley
+    // Road) have canted bays, often up both storeys; Page Hall's small
+    // terraces mostly have flat fronts with the odd ground-floor bay
+    const fs = net.nearestStreet(fx + F.nx * 4, fz + F.nz * 4), mainRoad = !!fs && (fs.road.kind === 'a' || fs.road.kind === 'b') && fs.dist < 25;
+    const hasBay = !B.modern && W > 4.2 && (mainRoad ? R() < 0.9 : R() < 0.35), bay2 = hasBay && mainRoad && B.storeys >= 2 && R() < 0.6;
+    const bay = (y0, base) => {
+      const bw = 1.5, proj = 0.65, h = 1.5;
+      if (base) f.box(M.dressed, bx, y0 - 1.2, D + proj / 2, bw + 0.9, 0.9, proj, { tile: 1, color: '#cdc2ad' });
+      else { f.box(wallMat, bx, y0 - 0.95, D + proj / 2, bw + 0.9, 0.5, proj, { tile: 1.3, color: tint }); }
+      f.geo(M.win, atlasQuad(bw, h, v * 0.25 + 0.004, 0, v * 0.25 + 0.246, 1), bx, y0, D + proj + 0.01);
+      for (const sd of [-1, 1]) f.geo(M.win, atlasQuad(0.65, h, v * 0.25 + 0.05, 0, v * 0.25 + 0.2, 1), bx + sd * (bw / 2 + 0.2), y0, D + proj / 2, { ry: sd * 0.78 });
+      for (const sd of [-1, 1]) f.box(M.dressed, bx + sd * (bw / 2 + 0.43), y0, D + 0.1, 0.12, h + 0.1, 0.2, { color: '#d6cbb5', detail: true });   // stone mullions at the corners
+      f.box(M.dressed, bx, y0 + 0.85, D + proj / 2, bw + 0.95, 0.18, proj + 0.1, { color: '#d6cbb5' });
+    };
+    if (hasBay) {
+      bay(1.65, true);
+      if (bay2) { bay(1.65 + FLOOR, false); f.box(M.slate, bx, 1.65 + FLOOR + 1.05, D + 0.28, 2.4, 0.14, 0.62, { color: '#6e737a', rx: -0.35 }); }
+      else f.box(M.slate, bx, 2.66, D + 0.28, 2.4, 0.14, 0.65, { color: '#6e737a', rx: -0.3 });
     } else win(bx, 1.6, B.modern ? 1.8 : 1.4, 1.5, v);
-    upper(1.6 + FLOOR); if (B.storeys >= 3) upper(1.6 + FLOOR * 2);
+    const upperRow = (y) => { if (y + 0.7 > eH) return; if (!bay2 || y > 1.6 + FLOOR + 0.1) { upper(y); return; } if (W > 4.6) win(-(W / 2 - 1.0) * m, y, 0.8, 1.3, (v + 2) % 4); };
+    upperRow(1.6 + FLOOR); if (B.storeys >= 3) upperRow(1.6 + FLOOR * 2);
     if (R() < 0.25) f.geo(M.dish, new THREE.SphereGeometry(0.34, 8, 5, 0, Math.PI * 2, 0, 0.9), -W / 2 + 0.7, eH - 0.9, D + 0.25, { rx: Math.PI / 2 - 0.3, color: '#cfd2d4', detail: true });
-    // front garden wall (where there's a garden between the house and the pavement)
-    const r = net.nearestStreet(fx + F.nx * 2, fz + F.nz * 2);
-    if (r) {
-      const gd = r.dist - 2 - r.road.half - r.road.pave;         // front of the house to the back of the pavement
-      const toFront = Math.hypot(fx - r.px, fz - r.pz) - r.road.half - r.road.pave;
-      if (toFront > 1.1 && toFront < 24) {
-        const z = toFront - 0.15;
-        // flagged path from the gate to the front door across longer gardens
-        if (z > 2.4) {
-          const ey = G(...F.toW(am + dx, B.dMax + z)) - pl.gF, sl = Math.atan2(ey, z);
-          f.box(M.stone, dx, ey / 2 + 0.02, z / 2, 0.95, 0.06, Math.hypot(z, ey), { color: '#a39c90', rx: -sl, detail: true });
-        }
-        for (const [a, b] of [[-W / 2, dx - 0.6], [dx + 0.6, W / 2]].map(([a, b]) => [Math.min(a, b), Math.max(a, b)])) {
-          if (b - a < 0.2) continue;
-          if (B.modern && pl.k % 3 !== 2) {
-            noteBound(...f.world(a, z), ...f.world(b, z));
-            if (pl.k % 3 === 0) f.run(M.hedge, a, b, z, 0.7, -0.1, 1.1, { color: '#3f6b35', detail: true });       // privet hedge
-            else {                                                                                                // low fence
-              for (let x = a + 0.1; x < b; x += 1.8) f.run(M.wood, x - 0.04, x + 0.04, z, 0.08, -0.2, 0.9, { color: '#6b5a44', detail: true });
-              f.run(M.wood, a, b, z, 0.03, 0.35, 0.85, { color: '#7a6850', detail: true });
-            }
-            continue;
-          }
-          f.run(M.brick, a, b, z, 0.24, -0.35, 0.8, { tile: 1.3, color: tint, detail: true });
-          noteBound(...f.world(a, z), ...f.world(b, z));
-          f.run(M.stone, a - 0.01, b + 0.01, z, 0.3, 0.8, 0.9, { color: '#c8bca6', detail: true });
-        }
-        if (R() < 0.5) { const bc = ['#2a2a2a', '#2d4f8c', '#6b4a2b', '#2f6b36'][(R() * 4) | 0]; f.box(M.plastic, 1.6 * m, 0.55, Math.min(z - 0.5, 1.2), 0.6, 1.05, 0.7, { color: bc, detail: true }); }
-        if (R() < 0.2) f.box(M.hedge, 1.2 * m, 0.7, z - 0.3, 1.6, 1.2, 0.5, { color: '#3f6b35', detail: true });
-      }
-      void gd;
-    }
+    // (front gardens, walls, hedges and paths are laid out per terrace later: frontGardens)
+    pl.doorW = f.world(dx, 0);
   } else {
     // ---- shopfront: frame, display, door, stall riser, fascia sign, shutter box ----
     const S = pl.shop;
@@ -501,6 +497,86 @@ function noteBound(x0, z0, x1, z1) {
 function nearBound(x, z, r) {
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [a, b] of BOUND.get(bKey(x + i * 4, z + j * 4)) || []) if ((a - x) ** 2 + (b - z) ** 2 < r * r) return true;
   return false;
+}
+
+// Front gardens, laid out per terrace along the back of the pavement (so the
+// walls are continuous and line up), from the real gap between each house
+// and the pavement:
+//  - under ~2 m: straight to the street (Page Hall): a paved forecourt, no wall
+//  - deeper: a low brick wall with stone coping on the pavement line, a gate
+//    opposite each front door with piers, dividing walls between neighbours,
+//    a flagged path to the door; some with a privet hedge behind the wall;
+//    semis and newer houses get hedges, low fences or walls.
+function frontGardens(B, batch, M, world, net, R) {
+  const F = B.F, nx = F.nx, nz = F.nz;
+  const frontD = (P, a) => { let best = -Infinity; for (let i = 0; i < P.length; i++) { const A = P[i], Q = P[(i + 1) % P.length], lo = Math.min(A[0], Q[0]), hi = Math.max(A[0], Q[0]); if (hi - lo < 1e-4 || a < lo || a > hi) continue; const d = A[1] + (Q[1] - A[1]) * (a - A[0]) / (Q[0] - A[0]); if (d > best) best = d; } return best; };
+  const march = (x, z) => { for (let t = 0.2; t < 24; t += 0.2) if (net.onRoadOrPavement(x + nx * t, z + nz * t, 0)) return t; return null; };
+  const piece = (mat, x0, z0, x1, z1, t, lo, hi, color, tile = 0) => { const g0 = G(x0, z0), g1 = G(x1, z1); batch.sloped(mat, x0, z0, x1, z1, t, g0 + lo, g1 + lo, g0 + hi, g1 + hi, { color, tile, detail: true }); };
+  const brickWall = (x0, z0, x1, z1, h) => {
+    if (Math.hypot(x1 - x0, z1 - z0) < 0.15) return;
+    piece(M.brick, x0, z0, x1, z1, 0.23, -0.4, h, B.tint, 1.3);
+    piece(M.kerb, x0, z0, x1, z1, 0.32, h, h + 0.08, '#d4ccbb');                                 // stone coping
+    noteBound(x0, z0, x1, z1);
+    const g = G((x0 + x1) / 2, (z0 + z1) / 2); world.addOBB((x0 + x1) / 2, (z0 + z1) / 2, 0.12, Math.hypot(x1 - x0, z1 - z0) / 2, Math.atan2(x1 - x0, z1 - z0), g - 1, g + h, 'wall');
+  };
+  const hedge = (x0, z0, x1, z1, h) => {
+    if (Math.hypot(x1 - x0, z1 - z0) < 0.3) return;
+    piece(M.hedge, x0, z0, x1, z1, 0.75, -0.1, h - 0.12, '#3b6531');
+    piece(M.hedge, x0, z0, x1, z1, 0.6, h - 0.14, h, '#446f37');                                 // rounded-off top
+    noteBound(x0, z0, x1, z1);
+  };
+  const fence = (x0, z0, x1, z1) => {
+    const L = Math.hypot(x1 - x0, z1 - z0); if (L < 0.2) return;
+    for (let k = 0; k <= Math.floor(L / 1.8); k++) { const t = Math.min(1, k * 1.8 / L), x = x0 + (x1 - x0) * t, z = z0 + (z1 - z0) * t; batch.box(M.wood, x, G(x, z) + 0.42, z, 0.08, 0.95, 0.08, { color: '#6b5a44', detail: true }); }
+    piece(M.wood, x0, z0, x1, z1, 0.03, 0.3, 0.85, '#7a6850'); noteBound(x0, z0, x1, z1);
+  };
+  const pts = [];
+  for (const pl of B.plots) {
+    if (!pl.hasFront || pl.shop) { pts.push(null); continue; }
+    const d0 = frontD(pl.piece, pl.a0 + 0.05), d1 = frontD(pl.piece, pl.a1 - 0.05);
+    if (!isFinite(d0) || !isFinite(d1)) { pts.push(null); continue; }
+    const H0 = F.toW(pl.a0, d0), H1 = F.toW(pl.a1, d1), g0 = march(...H0), g1 = march(...H1);
+    pts.push(g0 === null || g1 === null || Math.abs(g0 - g1) > 3 ? null : { pl, H0, H1, g0, g1 });
+  }
+  const style = B.modern ? 'modern' : R() < 0.3 ? 'hedge' : 'wall';
+  const first = pts.find(Boolean), fr = first && net.nearestStreet(first.H0[0] + nx * (first.g0 + 1), first.H0[1] + nz * (first.g0 + 1));
+  const onMain = !!fr && (fr.road.kind === 'a' || fr.road.kind === 'b');
+  const wallH = onMain ? 1.0 : 0.85;                          // taller walls in front of the big houses on the main roads
+  pts.forEach((q, i) => {
+    if (!q) return;
+    const { pl, H0, H1, g0, g1 } = q, g = Math.min(g0, g1);
+    if (g < 2.0) {                                                                  // straight to the street: paved forecourt
+      if (g > 0.3) (B.forecourts ||= []).push([H0, H1, [H1[0] + nx * g1, H1[1] + nz * g1], [H0[0] + nx * g0, H0[1] + nz * g0]]);
+      return;
+    }
+    const W0 = [H0[0] + nx * (g0 - 0.14), H0[1] + nz * (g0 - 0.14)], W1 = [H1[0] + nx * (g1 - 0.14), H1[1] + nz * (g1 - 0.14)];
+    const L = Math.hypot(W1[0] - W0[0], W1[1] - W0[1]), ex = (W1[0] - W0[0]) / L, ez = (W1[1] - W0[1]) / L;
+    // gate opposite the front door
+    const dw = pl.doorW || [(H0[0] + H1[0]) / 2, (H0[1] + H1[1]) / 2];
+    let u = (dw[0] - W0[0]) * ex + (dw[1] - W0[1]) * ez; u = Math.max(0.7, Math.min(L - 0.7, u));
+    const Ga = [W0[0] + ex * (u - 0.5), W0[1] + ez * (u - 0.5)], Gb = [W0[0] + ex * (u + 0.5), W0[1] + ez * (u + 0.5)];
+    const kind = style === 'modern' ? ['hedge', 'fence', 'wall'][pl.k % 3] : style;
+    const run = (a, b) => {
+      if (kind === 'fence') fence(...a, ...b);
+      else if (kind === 'hedge' && B.modern) hedge(...a, ...b, 1.1);
+      else { brickWall(...a, ...b, kind === 'hedge' ? 0.55 : wallH); if (kind === 'hedge') hedge(a[0] - nx * 0.5, a[1] - nz * 0.5, b[0] - nx * 0.5, b[1] - nz * 0.5, 1.35); }
+    };
+    run(W0, Ga); run(Gb, W1);
+    if (kind !== 'fence' && !(kind === 'hedge' && B.modern)) for (const P of [Ga, Gb]) {         // gate piers
+      const gp = G(...P), ph = (kind === 'hedge' ? 0.55 : wallH) + 0.22;
+      batch.box(M.brick, P[0], gp + ph / 2 - 0.2, P[1], 0.36, ph + 0.4, 0.36, { color: B.tint, tile: 1.3, ry: Math.atan2(ex, ez), detail: true });
+      batch.box(M.kerb, P[0], gp + ph + 0.05, P[1], 0.44, 0.1, 0.44, { color: '#d4ccbb', ry: Math.atan2(ex, ez), detail: true });
+    }
+    // dividing wall with the house to the left (and the right at the end of a row)
+    const side = (Hp, Wp) => { if (B.modern) fence(...Hp, ...Wp); else brickWall(...Hp, ...Wp, 0.7); };
+    side(H0, W0);
+    if (!pts[i + 1]) side(H1, W1);
+    // flagged path from the gate to the door
+    const gm = [W0[0] + ex * u, W0[1] + ez * u], dp = [dw[0] + nx * 0.25, dw[1] + nz * 0.25], gD = G(...dp), gG = G(...gm);
+    batch.sloped(M.pave, dp[0], dp[1], gm[0], gm[1], 0.95, gD - 0.1, gG - 0.1, gD + 0.03, gG + 0.03, { color: '#c9c3b8', detail: true });
+    // a wheelie bin or two in the garden
+    if (R() < 0.55) { const t = u > L / 2 ? 0.55 : L - 0.55, bx = W0[0] + ex * t - nx * 0.5, bz = W0[1] + ez * t - nz * 0.5; batch.box(M.plastic, bx, G(bx, bz) + 0.53, bz, 0.58, 1.06, 0.7, { color: BINS[(R() * BINS.length) | 0], ry: Math.atan2(ex, ez), detail: true }); }
+  });
 }
 
 // Where the side or back of a house faces a street across a strip of
@@ -529,7 +605,7 @@ function roadsideBoundaries(list, batch, M, world, net) {
           else {
             const g0 = G(x0, z0), g1 = G(x1, z1);
             batch.sloped(M.brick, x0, z0, x1, z1, 0.24, g0 - 0.4, g1 - 0.4, g0 + 1.45, g1 + 1.45, { color: B.tint, tile: 1.3, detail: true });
-            batch.sloped(M.stone, x0, z0, x1, z1, 0.32, g0 + 1.45, g1 + 1.45, g0 + 1.55, g1 + 1.55, { color: '#b9ae9a', detail: true });
+            batch.sloped(M.dressed, x0, z0, x1, z1, 0.32, g0 + 1.45, g1 + 1.45, g0 + 1.55, g1 + 1.55, { color: '#b9ae9a', detail: true });
             world.addOBB((x0 + x1) / 2, (z0 + z1) / 2, 0.12, Math.hypot(x1 - x0, z1 - z0) / 2, Math.atan2(x1 - x0, z1 - z0), g0 - 1, g0 + 1.5, 'wall');
           }
         }
@@ -541,7 +617,7 @@ function roadsideBoundaries(list, batch, M, world, net) {
         let B = null;
         if (ok) {
           const hit = world.raycastBoxes(p.x, G(p.x, p.z) + 1, p.z, nx, 0, nz, 16);
-          B = hit.box && hit.box.tag === 'building' && hit.dist > 1.2 ? houseAt(p.x + nx * (hit.dist + 0.3), p.z + nz * (hit.dist + 0.3)) : null;
+          B = hit.box && hit.box.tag === 'building' && hit.dist > 2.5 && hit.dist < 13 ? houseAt(p.x + nx * (hit.dist + 0.3), p.z + nz * (hit.dist + 0.3)) : null;
           // the front of a house has its own garden wall (or none): only sides and backs
           if (!B || B.front.nx * -nx + B.front.nz * -nz > 0.7) ok = false;
         }
@@ -563,10 +639,10 @@ function fenceRun(batch, M, world, x0, z0, x1, z1) {
     const ax = x0 + (x1 - x0) * k / n, az = z0 + (z1 - z0) * k / n, bx = x0 + (x1 - x0) * (k + 1) / n, bz = z0 + (z1 - z0) * (k + 1) / n;
     const ga = G(ax, az), gb = G(bx, bz);
     batch.sloped(M.wood, ax, az, bx, bz, 0.04, ga + 0.14, gb + 0.14, ga + 1.8, gb + 1.8, { color: '#6e5238', tile: 1, detail: true });
-    batch.sloped(M.stone, ax, az, bx, bz, 0.05, ga - 0.2, gb - 0.2, ga + 0.15, gb + 0.15, { color: '#9d9a93', detail: true });
-    batch.box(M.stone, ax, ga + 0.85, az, 0.1, 2.1, 0.1, { color: '#a7a49c', detail: true });
+    batch.sloped(M.dressed, ax, az, bx, bz, 0.05, ga - 0.2, gb - 0.2, ga + 0.15, gb + 0.15, { color: '#9d9a93', detail: true });
+    batch.box(M.dressed, ax, ga + 0.85, az, 0.1, 2.1, 0.1, { color: '#a7a49c', detail: true });
   }
-  batch.box(M.stone, x1, G(x1, z1) + 0.85, z1, 0.1, 2.1, 0.1, { color: '#a7a49c', detail: true });
+  batch.box(M.dressed, x1, G(x1, z1) + 0.85, z1, 0.1, 2.1, 0.1, { color: '#a7a49c', detail: true });
   const g = G((x0 + x1) / 2, (z0 + z1) / 2);
   world.addOBB((x0 + x1) / 2, (z0 + z1) / 2, 0.05, L / 2, Math.atan2(x1 - x0, z1 - z0), g - 1, g + 1.8, 'fence');
 }
@@ -637,7 +713,7 @@ function petrolStation(batch, M, world, net, x, z) {
   f.box(M.plastic, 0, 5.4, 0, 11.06, 0.3, 16.06, { color: '#1f7a4a' });                                  // canopy band
   f.box(M.lampHead, 0, 5.03, 0, 9, 0.04, 14, { color: '#ffffff', detail: true });
   for (const cz of [-4, 4]) {
-    f.box(M.stone, 0, 0.1, cz, 1.2, 0.2, 6, { color: '#c9c4b8' });                                      // island
+    f.box(M.dressed, 0, 0.1, cz, 1.2, 0.2, 6, { color: '#c9c4b8' });                                      // island
     for (const pz of [-1.5, 1.5]) {
       f.box(M.metal, 0, 0.95, cz + pz, 0.5, 1.7, 0.9, { color: '#e4e6e8' });                             // pump
       f.box(M.plastic, 0, 1.3, cz + pz, 0.52, 0.5, 0.6, { color: '#1b1b1b' });                           // screen panel
@@ -664,7 +740,7 @@ function shopFront(f, W, S, M, signs, R, D = 0) {
   const dv = DISPLAY[S.miniMart ? 'miniMart' : S.cat] ?? 0, du = (dv % 4) * 0.25, dvv = dv < 4 ? 0.5 : 0;
   f.geo(M.display, atlasQuad(W - 1.8, 2.2, du, dvv, du + 0.25, dvv + 0.5), 0.55, 1.6, D + 0.13);
   f.box(M.glass, -W / 2 + 0.75, 1.25, D + 0.1, 0.95, 2.3, 0.06, { color: '#ffffff' });
-  f.box(M.stone, 0, -0.03, D + 0.12, W - 0.3, 0.96, 0.14, { color: '#3a3a3a' });
+  f.box(M.dressed, 0, -0.03, D + 0.12, W - 0.3, 0.96, 0.14, { color: '#3a3a3a' });
   f.geo(M.sign, atlasBox(W - 0.2, 0.85, 0.2, cell.u0, cell.v0, cell.u1, cell.v1), 0, 3.6, D + 0.2);
   f.box(M.metal, 0, 3.1, D + 0.2, W - 0.4, 0.22, 0.25, { color: '#9aa0a3', detail: true });
   if (S.cat === 'tolet' || R() < 0.1) f.box(M.metal, 0.55, 2.45, D + 0.16, W - 1.8, 1.1, 0.04, { color: '#8e9497' });
@@ -698,7 +774,7 @@ function buildBlock(B, ms, batch, M, world, R, { h, wall: wallMat, col, roofCol,
       }
     }
     // stone string courses at each floor (Victorian) / concrete spandrel lines
-    if (courses && L > 1) for (let fl = 1; fl <= nf; fl++) { const y = base + fl * floorH - 0.25; if (y > top - 0.2) break; bandQuad(ms, M.stone, courses, a, b, y, y + 0.22, n, 0.05, 1); }
+    if (courses && L > 1) for (let fl = 1; fl <= nf; fl++) { const y = base + fl * floorH - 0.25; if (y > top - 0.2) break; bandQuad(ms, M.dressed, courses, a, b, y, y + 0.22, n, 0.05, 1); }
     // accent panel strips on modern cladding
     if (accent && L > 8 && R() < 0.5) { const f = 0.15 + R() * 0.6, w = 2.4 / L; bandQuad(ms, M.cladding, accent, [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], [a[0] + (b[0] - a[0]) * (f + w), a[1] + (b[1] - a[1]) * (f + w)], base + 0.3, top - 0.3, n, 0.06, 3); }
     world.addOBB((a[0] + b[0]) / 2 - n[0] * 0.2, (a[1] + b[1]) / 2 - n[1] * 0.2, L / 2 + 0.05, 0.2, Math.atan2(n[0], n[1]), bot - 1.4, top + (pitched ? 3 : 0), B.tag || 'building');
@@ -717,7 +793,7 @@ function buildBlock(B, ms, batch, M, world, R, { h, wall: wallMat, col, roofCol,
     if (T.length) ms.tris(M.roofFlat, roofCol, P.map(([x, z]) => [x, top, z]), P.map(([x, z]) => [x / 4, z / 4]), T, true);
     for (let i = 0; i < P.length; i++) {
       const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 0.3) continue;
-      batch.box(M.stone, (a[0] + b[0]) / 2, top + 0.2, (a[1] + b[1]) / 2, 0.3, 0.4, L + 0.25, { color: '#b8b2a6', ry: Math.atan2(b[0] - a[0], b[1] - a[1]), detail: true });
+      batch.box(M.dressed, (a[0] + b[0]) / 2, top + 0.2, (a[1] + b[1]) / 2, 0.3, 0.4, L + 0.25, { color: '#b8b2a6', ry: Math.atan2(b[0] - a[0], b[1] - a[1]), detail: true });
     }
     // rooftop plant rooms, flues and air handling units
     if (plant && B.A > 600) {
@@ -813,12 +889,12 @@ export function finishHospital(batch, M, world, pending, scene) {
       // square brick tower rising through the roof: stone quoins, clock faces, pyramid roof, finial
       const f = new Frame(batch, p.x, p.z, p.ry, p.y - 2), T = 5.2, H = 13;
       f.box(M.brick, 0, H / 2, 0, T, H, T, { color: '#d9b49e', tile: 1.3 });
-      for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) f.box(M.stone, x * T / 2, H / 2, z * T / 2, 0.5, H, 0.5, { color: '#d8ccb4', tile: 1 });
-      f.box(M.stone, 0, H + 0.2, 0, T + 0.5, 0.4, T + 0.5, { color: '#d8ccb4' });
+      for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) f.box(M.dressed, x * T / 2, H / 2, z * T / 2, 0.5, H, 0.5, { color: '#d8ccb4', tile: 1 });
+      f.box(M.dressed, 0, H + 0.2, 0, T + 0.5, 0.4, T + 0.5, { color: '#d8ccb4' });
       const face = clockTexture();
       for (const [dx, dz, ry] of [[0, 1, 0], [0, -1, Math.PI], [1, 0, Math.PI / 2], [-1, 0, -Math.PI / 2]]) {
         f.geo(face, new THREE.CircleGeometry(1.35, 24), dx * (T / 2 + 0.03), H - 2.4, dz * (T / 2 + 0.03), { ry, color: '#ffffff' });
-        f.box(M.stone, dx * (T / 2 + 0.02), H - 2.4, dz * (T / 2 + 0.02), dx ? 0.1 : 3.1, 3.1, dz ? 0.1 : 3.1, { color: '#d8ccb4' });
+        f.box(M.dressed, dx * (T / 2 + 0.02), H - 2.4, dz * (T / 2 + 0.02), dx ? 0.1 : 3.1, 3.1, dz ? 0.1 : 3.1, { color: '#d8ccb4' });
       }
       const roof = new THREE.ConeGeometry(T * 0.78, 5.5, 4, 1).rotateY(Math.PI / 4);
       f.geo(M.slate, roof, 0, H + 3.15, 0, { color: '#7e858d' });

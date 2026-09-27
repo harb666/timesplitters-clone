@@ -189,6 +189,23 @@ export function gloveSet(n = 256) {
   }, 2));
 }
 
+// Multi-terrain camouflage ripstop for combat shirt sleeves: tan base with
+// soft brown/olive/green blotches and fine ripstop grid.
+export function camoSet(n = 512) {
+  return cached('camo' + n, () => buildSet(n, (u, v) => {
+    const b1 = fbm(u * 1.0, v * 2.2, { freq: 4, oct: 4, seed: 91 }), b2 = fbm(u * 1.3, v * 1.8, { freq: 5, oct: 3, seed: 92 }), b3 = fbm(u, v, { freq: 9, oct: 2, seed: 93 });
+    let c = [150, 136, 106];                                           // tan
+    if (b1 > 0.56) c = [104, 98, 70];                                  // olive
+    if (b2 > 0.6) c = [92, 72, 52];                                    // brown
+    if (b3 > 0.66 && b1 < 0.5) c = [70, 84, 58];                       // green
+    if (b1 > 0.72 && b2 > 0.55) c = [58, 52, 42];                      // dark
+    const x = (u * n) % 8, y = (v * n) % 8, rip = x < 0.8 || y < 0.8 ? 0.9 : 1;
+    const weave = ((Math.floor(u * n) + Math.floor(v * n)) % 2) ? 0.97 : 1.03, g = fbm(u, v, { freq: 40, oct: 2, seed: 94 });
+    const k = rip * weave * (0.92 + g * 0.14);
+    return { r: c[0] * k, g: c[1] * k, b: c[2] * k, rough: 0.92, metal: 0, h: (rip < 1 ? 0.8 : 0.5) + g * 0.3 };
+  }, 1.8));
+}
+
 // Woven jacket fabric for sleeves.
 export function fabricSet(n = 256, base = [52, 60, 48]) {
   return cached('fabric' + n + base, () => buildSet(n, (u, v) => {

@@ -66,7 +66,7 @@ export class FPWeapon {
     poseHand(this.handR, POSES[cfg.rightHand.pose]);
     this.armR = new Forearm(M); this.armL = new Forearm(M);
     // forearms live directly in viewmodel (camera) space, next to the rig
-    this.arms = new THREE.Group(); this.arms.add(this.armR.mesh, this.armR.cuff, this.armL.mesh, this.armL.cuff);
+    this.arms = new THREE.Group(); this.arms.add(this.armR.mesh, this.armR.cuff, this.armL.mesh, this.armL.cuff); this.arms.visible = false;
     // muzzle flash + light (lights the gun and hands for a frame)
     this.flash = buildFlash(cfg.flashSize ?? 0.12); model.muzzle.add(this.flash.grp);
     this.flashLight = new THREE.PointLight(0xffa850, 0, 3, 2); model.muzzle.add(this.flashLight);

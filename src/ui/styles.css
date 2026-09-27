@@ -156,3 +156,60 @@ button.round.small { position: static; width: 38px; height: 38px; font-size: 18p
 
 /* free roam: no briefing box on screen */
 #mission-card { display: none !important; }
+
+/* ================= modern military-shooter HUD ================= */
+#hud { font-family: "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif; text-shadow: 0 1px 2px rgba(0,0,0,.85); }
+/* crosshair: four thin white lines, wider gap */
+#crosshair span { background: rgba(255,255,255,.92); box-shadow: 0 0 1px 1px rgba(0,0,0,.45); border-radius: 0; }
+#crosshair span:nth-child(1) { width: 2px; height: 9px; left: -1px; top: -17px; }
+#crosshair span:nth-child(2) { width: 2px; height: 9px; left: -1px; top: 8px; }
+#crosshair span:nth-child(3) { width: 9px; height: 2px; left: -17px; top: -1px; }
+#crosshair span:nth-child(4) { width: 9px; height: 2px; left: 8px; top: -1px; }
+#crosshair::after { content: ""; position: absolute; width: 2px; height: 2px; left: -1px; top: -1px; background: rgba(255,255,255,.9); }
+#hitmarker { width: 22px; height: 22px; margin: -11px 0 0 -11px; }
+/* score: plain number, top right */
+#score { background: none; font-size: 16px; color: #fff; padding: 4px 8px; }
+#btn-settings { background: rgba(0,0,0,.35) !important; border-color: rgba(255,255,255,.3) !important; }
+/* square minimap, dark frame */
+#minimap { border-radius: 4px !important; border: 2px solid rgba(255,255,255,.18); box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 4px 14px rgba(0,0,0,.45); top: calc(10px + var(--safe-t)); }
+.touch-mode #minimap { width: 104px; height: 104px; }
+/* compass strip, top centre */
+#compass { position: absolute; left: 50%; top: calc(8px + var(--safe-t)); width: min(360px, 44vw); height: 26px; margin-left: calc(min(360px, 44vw) / -2); overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); }
+#compass-strip { position: absolute; left: 50%; top: 0; height: 100%; will-change: transform; }
+#compass-strip i { position: absolute; top: 0; width: 1px; height: 5px; background: rgba(255,255,255,.55); }
+#compass-strip i.T { height: 8px; background: rgba(255,255,255,.85); }
+#compass-strip b { position: absolute; top: 10px; transform: translateX(-50%); font-size: 10px; font-weight: 600; color: rgba(255,255,255,.75); letter-spacing: .04em; }
+#compass-strip b.c { font-size: 13px; font-weight: 800; color: #fff; top: 9px; }
+#compass-mark { position: absolute; left: 50%; top: 0; margin-left: -4px; border: 4px solid transparent; border-top: 6px solid #ffd24a; }
+/* ammo: big count + reserve, weapon name, bullet pips — no box */
+#ammo-box { background: none !important; padding: 0 !important; }
+.touch-mode #ammo-box { top: calc(58px + var(--safe-t)); }
+#weapon-name { font-size: 11px; letter-spacing: .18em; color: rgba(255,255,255,.8); font-weight: 700; }
+.ammo-row { display: flex; align-items: baseline; justify-content: flex-end; gap: 6px; line-height: 1; margin-top: 2px; }
+#ammo-mag { font-size: 38px; font-weight: 800; color: #fff; }
+#ammo-mag.low { color: #ff5a4a; }
+#ammo-reserve { font-size: 16px; opacity: .7; font-weight: 700; }
+#ammo-sep { display: none; }
+#ammo-pips { display: flex; flex-wrap: wrap-reverse; justify-content: flex-end; gap: 2px; width: 112px; margin: 5px 0 0 auto; }
+#ammo-pips i { width: 2px; height: 8px; background: rgba(255,255,255,.22); }
+#ammo-pips i.f { background: rgba(255,255,255,.95); }
+/* health + armour: thin bars, no numbers or box */
+#vitals { background: none !important; padding: 0 !important; gap: 3px !important; width: 180px !important; }
+.bar { grid-template-columns: 1fr !important; }
+.bar-label, #hp-num, #ar-num { display: none; }
+.bar-track { height: 4px !important; border-radius: 0 !important; background: rgba(0,0,0,.45) !important; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
+.bar-fill.hp { background: #f2f2ee !important; }
+.bar-fill.ar { background: #6fb3ff !important; }
+/* blood / damage vignette */
+#blood { position: absolute; inset: 0; opacity: 0; transition: opacity .6s; background: radial-gradient(ellipse at center, transparent 42%, rgba(120,0,0,.55) 78%, rgba(90,0,0,.9)); }
+#damage-flash { background: radial-gradient(ellipse at center, transparent 50%, rgba(180,10,0,.5)); }
+/* touch buttons: dark translucent discs, thin white rings */
+button.round { background: rgba(10,12,16,.38); border: 1.5px solid rgba(255,255,255,.55); font-weight: 700; letter-spacing: .06em; text-shadow: 0 1px 2px #000; }
+button.round.big { background: rgba(10,12,16,.4); border: 2px solid rgba(255,255,255,.8); }
+button.round.pressed { background: rgba(255,255,255,.28); border-color: #fff; }
+button.round.on { background: rgba(255,210,74,.35); border-color: #ffd24a; }
+#stick { border: 1.5px solid rgba(255,255,255,.4); background: rgba(10,12,16,.25); }
+#stick-knob { background: rgba(255,255,255,.35); border: 1.5px solid rgba(255,255,255,.85); }
+#prompt { background: rgba(0,0,0,.55); border: 0; border-radius: 3px; font-weight: 600; }
+#toast { color: #fff; font-weight: 800; }

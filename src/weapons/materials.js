@@ -24,12 +24,13 @@ export function weaponMaterials(quality = 'medium') {
     bore: new THREE.MeshStandardMaterial({ color: 0x050505, metalness: 0.6, roughness: 0.6 }),
     redInsert: new THREE.MeshStandardMaterial({ color: 0xff3a1a, emissive: 0x551000, roughness: 0.4, metalness: 0 }),
     whiteDot: new THREE.MeshStandardMaterial({ color: 0xf2f2e6, roughness: 0.5, metalness: 0 }),
-    glove: std(P.gloveSet(256), { normal: 1 }),
-    sleeve: std(P.fabricSet(256, [58, 66, 52]), { normal: 0.8 }),
+    glove: std(P.gloveSet(256), { normal: 1.2 }),
+    gloveTan: std(P.fabricSet(256, [120, 104, 80]), { normal: 0.7 }),
+    sleeve: std(P.camoSet(quality === 'low' ? 256 : 512), { normal: 0.9 }),
     cuff: std(P.polymerSet(128, { base: [30, 30, 30], seed: 81 }), { normal: 0.5 }),
   };
-  for (const k of ['wood', 'walnut', 'checkered', 'bakelite', 'polymer', 'glove', 'sleeve', 'cuff']) M[k].metalness = 0;
+  for (const k of ['wood', 'walnut', 'checkered', 'bakelite', 'polymer', 'glove', 'gloveTan', 'sleeve', 'cuff']) M[k].metalness = 0;
   M.wood.metalnessMap = M.walnut.metalnessMap = M.checkered.metalnessMap = M.bakelite.metalnessMap = M.polymer.metalnessMap = null;
-  M.glove.metalnessMap = M.sleeve.metalnessMap = M.cuff.metalnessMap = null;
+  M.glove.metalnessMap = M.gloveTan.metalnessMap = M.sleeve.metalnessMap = M.cuff.metalnessMap = null;
   return M;
 }

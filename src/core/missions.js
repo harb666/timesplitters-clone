@@ -152,8 +152,7 @@ const xz = (p) => [p.x, p.z];
 // Free roam only (missions are switched off for now; allMissions() keeps them
 // ready for later).
 export function freeRoam() {
-  return [{ title: 'Fir Vale — free roam', steps: [{ text: () => 'Explore: Page Hall Road, Barnsley Road, Herries Road, Hinde House Lane, the Northern General…', done: () => false,
-    intro: '<b>Welcome to Fir Vale.</b> Have a wander — the minimap (top left) shows the real streets.' }] }];
+  return [{ title: 'Fir Vale — free roam', steps: [{ text: () => 'Explore: Page Hall Road, Barnsley Road, Herries Road, Hinde House Lane, the Northern General…', done: () => false }] }];
 }
 
 export class MissionRunner {

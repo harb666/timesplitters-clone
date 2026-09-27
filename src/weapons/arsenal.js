@@ -27,6 +27,7 @@ export class Arsenal {
   get name() { return this.current.name; }
   get ammo() { return this.current.ammo; }
   get reserve() { return this.current.reserve; }
+  get magSize() { return this.current.magSize; }
   get adsK() { return this.current.adsK; }
 
   swap() {

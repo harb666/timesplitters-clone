@@ -28,7 +28,7 @@ export function buildHand(M, left = false) {
   // palm (slightly tapered, rounded) + knuckle ridge + back-of-hand padding
   const palm = new THREE.Mesh(roundedBox(0.078, 0.028, 0.088, 0.011, 3, 40), M.glove);
   palm.position.set(0, 0, -0.044); inner.add(palm);
-  const knuckles = new THREE.Mesh(roundedBox(0.074, 0.012, 0.018, 0.005, 2, 40), M.cuff);
+  const knuckles = new THREE.Mesh(roundedBox(0.074, 0.013, 0.02, 0.006, 2, 40), M.cuff);   // hard knuckle guard
   knuckles.position.set(0, 0.012, -0.08); inner.add(knuckles);
   const cuff = new THREE.Mesh(boxUV(new THREE.CylinderGeometry(0.036, 0.038, 0.035, 18).rotateX(Math.PI / 2).scale(1.05, 0.72, 1), 40), M.cuff);
   cuff.position.set(0, 0, 0.012); inner.add(cuff);
@@ -55,7 +55,7 @@ export function buildHand(M, left = false) {
     tp.add(pivot); pivot.add(segment(M, tl[j], 0.0105 - j * 0.0008)); thumb.push(pivot); tp = pivot;
   }
   // thenar pad (thumb muscle) to fill the palm
-  const pad = new THREE.Mesh(roundedBox(0.03, 0.022, 0.05, 0.01, 2, 40), M.glove);
+  const pad = new THREE.Mesh(roundedBox(0.03, 0.022, 0.05, 0.01, 2, 40), M.gloveTan || M.glove);
   pad.position.set(-0.026, -0.006, -0.03); pad.rotation.y = 0.35; inner.add(pad);
   return { root, inner, fingers, thumb, thumbMount, left };
 }
@@ -86,13 +86,22 @@ export function poseHand(h, a, b = null, k = 0) {
 // Sleeve/forearm that stretches from an elbow point to the wrist.
 export class Forearm {
   constructor(M) {
-    const g = new THREE.CylinderGeometry(0.036, 0.05, 1, 16, 1, true);
-    g.translate(0, 0.5, 0); // base at elbow (0), top at wrist (1)
-    this.mesh = new THREE.Mesh(boxUV(g, 25), M.sleeve);
-    this.mesh.material = M.sleeve;
+    // sleeve of a combat shirt: narrow at the wrist, swelling over the forearm
+    // muscles, bunched folds, a loose cuff; slightly flattened (forearms aren't round)
+    const prof = [[0.034, 0], [0.037, 0.04], [0.043, 0.14], [0.047, 0.3], [0.05, 0.45], [0.049, 0.6], [0.052, 0.7], [0.05, 0.82], [0.053, 0.9], [0.052, 1]];
+    const g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 18, 0, Math.PI * 2);
+    const P = g.attributes.position;
+    for (let i = 0; i < P.count; i++) {
+      const x = P.getX(i), y = P.getY(i), z = P.getZ(i), a = Math.atan2(z, x);
+      const fold = 1 + 0.06 * Math.sin(y * 38 + Math.sin(a * 3) * 2) * Math.max(0, (y - 0.45) / 0.55) + 0.02 * Math.sin(a * 5 + y * 9);
+      P.setXYZ(i, x * fold * 1.08, 1 - y, z * fold * 0.86);                           // (lathe y runs wrist->elbow; flip so 0 = elbow, 1 = wrist)
+    }
+    g.computeVertexNormals();
+    this.mesh = new THREE.Mesh(boxUV(g, 4.5), M.sleeve);
     this.mesh.frustumCulled = false;
-    const cuffG = new THREE.CylinderGeometry(0.04, 0.038, 0.03, 16); cuffG.translate(0, -0.012, 0);
-    this.cuff = new THREE.Mesh(cuffG, M.sleeve);
+    // rolled cuff at the wrist, over the glove
+    const cuffG = new THREE.TorusGeometry(0.037, 0.008, 8, 20); cuffG.rotateX(Math.PI / 2); cuffG.scale(1.08, 1, 0.86); cuffG.translate(0, -0.005, 0);
+    this.cuff = new THREE.Mesh(boxUV(cuffG, 30), M.sleeve);
     this._a = new THREE.Vector3(); this._b = new THREE.Vector3(); this._d = new THREE.Vector3(); this._q = new THREE.Quaternion();
     this.up = new THREE.Vector3(0, 1, 0);
   }

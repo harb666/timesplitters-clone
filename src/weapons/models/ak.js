@@ -33,10 +33,11 @@ export function buildAK(M) {
   B.add(M.bright, place(rod(0.0035, -0.012, 0.005, 12), 0, 0.012, 0));
   // ---------- rear sight block + tangent leaf ----------
   B.add(M.steel, section([[-0.015, -0.012], [0.015, -0.012], [0.015, 0.016], [0.011, 0.024], [-0.011, 0.024], [-0.015, 0.016]], 0.285, 0.37, { bevel: 0.0012 }));
-  B.add(M.darkSteel, sideProfile([[0.298, 0.024], [0.362, 0.024], [0.362, 0.029], [0.302, 0.031]], 0.016, { bevel: 0.0005 }));
-  B.add(M.bright, place(roundedBox(0.02, 0.006, 0.01, 0.001), 0, 0.03, -0.335)); // range slider
-  for (const sx of [-1, 1]) B.add(M.darkSteel, place(new THREE.BoxGeometry(0.0055, 0.011, 0.004), sx * 0.0042, 0.0335, -0.3)); // notch ears
-  B.add(M.darkSteel, place(new THREE.BoxGeometry(0.0035, 0.004, 0.004), 0, 0.03, -0.3)); // notch bottom
+  // tangent leaf, raised at the rear so its notch lines up with the front post (line of sight y = 0.048)
+  B.add(M.darkSteel, sideProfile([[0.298, 0.024], [0.362, 0.024], [0.362, 0.029], [0.304, 0.038], [0.298, 0.038]], 0.016, { bevel: 0.0005 }));
+  B.add(M.bright, place(roundedBox(0.02, 0.006, 0.01, 0.001), 0, 0.03, -0.34)); // range slider
+  for (const sx of [-1, 1]) B.add(M.darkSteel, place(new THREE.BoxGeometry(0.0055, 0.0095, 0.004), sx * 0.0042, 0.04325, -0.3)); // notch ears (tops at 0.048)
+  B.add(M.darkSteel, place(new THREE.BoxGeometry(0.0035, 0.005, 0.004), 0, 0.0405, -0.3)); // notch bottom (top at 0.043)
   // ---------- barrel & muzzle device ----------
   B.add(M.blued, rod(0.0095, 0.36, 0.705, 24));
   B.add(M.steel, lathe([[0.0112, 0.7], [0.0122, 0.703], [0.0122, 0.742], [0.0105, 0.748], [0.0045, 0.748], [0.0045, 0.745]], 28));
@@ -116,8 +117,8 @@ export function buildAK(M) {
   const anchor = (name, x, y, z) => { const o = new THREE.Object3D(); o.name = name; o.position.set(x, y, z); root.add(o); return o; };
   const muzzle = anchor('muzzle', 0, 0, -0.75);
   const ejectPort = anchor('eject', 0.026, -0.004, -0.19);
-  const rearSight = anchor('rearSight', 0, 0.0335, -0.3);
-  const frontSight = anchor('frontSight', 0, 0.0335, -0.68);
+  const rearSight = anchor('rearSight', 0, 0.048, -0.3);
+  const frontSight = anchor('frontSight', 0, 0.048, -0.68);
 
   return { root, bolt, selector, trigger, magPivot, mag, muzzle, ejectPort, rearSight, frontSight };
 }

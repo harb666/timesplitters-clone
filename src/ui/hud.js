@@ -12,21 +12,45 @@ export class Hud {
       mag: $('ammo-mag'), reserve: $('ammo-reserve'), weapon: $('weapon-name'), score: $('score'),
       objective: $('objective'), missionTitle: $('mission-title'), subtitle: $('subtitle'), prompt: $('prompt'),
       toast: $('toast'), hit: $('hitmarker'), dmg: $('damage-flash'), bubbles: $('bubbles'), crosshair: $('crosshair'),
+      compass: $('compass-strip'), pips: $('ammo-pips'), blood: $('blood'),
     };
     this.bubbleMap = new Map(); // owner -> { el, t }
     this.v = new THREE.Vector3();
     this.cache = {};
     this.subT = 0; this.toastT = 0; this.hitT = 0; this.dmgT = 0;
+    this.buildCompass();
+    this.dir = new THREE.Vector3();
+  }
+
+  // compass strip: ticks every 5°, labels every 15°, repeated so it can wrap
+  buildCompass() {
+    const el = this.el.compass; if (!el) return;
+    const PX = 3, names = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+    let html = '';
+    for (let d = -180; d <= 540; d += 5) {
+      const b = ((d % 360) + 360) % 360, x = (d + 180) * PX, card = names[b] !== undefined;
+      html += `<i class="${b % 15 ? 't' : 'T'}" style="left:${x}px"></i>`;
+      if (b % 15 === 0) html += `<b class="${card ? 'c' : 'n'}" style="left:${x}px">${card ? names[b] : b}</b>`;
+    }
+    el.innerHTML = html; this.compassPx = PX;
   }
 
   set(key, el, value, fn) { if (this.cache[key] !== value) { this.cache[key] = value; fn(el, value); } }
 
   vitals(hp, ar) {
+    // blood at the edges of the screen when hurt (like health regen shooters)
+    this.set('blood', this.el.blood, Math.round(hp / 5), (e) => { e.style.opacity = hp >= 70 ? 0 : String(Math.min(0.85, (70 - hp) / 60)); });
     this.set('hp', this.el.hp, hp, (e, v) => { e.style.width = v + '%'; this.el.hpNum.textContent = v; });
     this.set('ar', this.el.ar, ar, (e, v) => { e.style.width = Math.min(100, v) + '%'; this.el.arNum.textContent = v; });
   }
   ammo(weapon) {
-    this.set('mag', this.el.mag, weapon.ammo, (e, v) => { e.textContent = v; e.classList.toggle('low', v <= 2); });
+    this.set('mag', this.el.mag, weapon.ammo, (e, v) => { e.textContent = v; e.classList.toggle('low', v <= Math.max(2, (weapon.magSize || 30) * 0.2)); });
+    const pk = weapon.ammo + '/' + (weapon.magSize || 30);
+    this.set('pips', this.el.pips, pk, (e) => {
+      const n = weapon.magSize || 30; let h = '';
+      for (let i = 0; i < n; i++) h += `<i class="${i < weapon.ammo ? 'f' : ''}"></i>`;
+      e.innerHTML = h;
+    });
     this.set('res', this.el.reserve, weapon.reserve, (e, v) => { e.textContent = v; });
     this.set('wn', this.el.weapon, weapon.name, (e, v) => { e.textContent = v; });
   }
@@ -62,6 +86,11 @@ export class Hud {
     if (this.toastT > 0) { this.toastT -= dt; if (this.toastT <= 0) this.el.toast.classList.remove('show'); }
     if (this.hitT > 0) { this.hitT -= dt; if (this.hitT <= 0) this.el.hit.classList.remove('show'); }
     if (this.dmgT > 0) { this.dmgT -= dt; if (this.dmgT <= 0) this.el.dmg.classList.remove('show'); }
+    if (this.el.compass && this.compassPx) {
+      this.camera.getWorldDirection(this.dir);
+      const bearing = ((Math.atan2(this.dir.x, -this.dir.z) * 180 / Math.PI) + 360) % 360;
+      this.el.compass.style.transform = `translateX(${-(bearing + 180) * this.compassPx}px)`;
+    }
     const w = window.innerWidth, h = window.innerHeight;
     for (const [owner, b] of this.bubbleMap) {
       b.t -= dt;

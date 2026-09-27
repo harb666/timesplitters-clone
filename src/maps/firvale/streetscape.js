@@ -95,6 +95,8 @@ export function buildStreetscape(batch, M, world, net, osm, beaconMat) {
       } else if (it.k === 'bollard') {
         batch.box(M.darkMetal, x, g + 0.5, z, 0.16, 1.0, 0.16, { color: '#1b1b1b', detail: true });
       }
+    } else if (it.island) {
+      // (guard railing of a traffic island: built with the island)
     } else if (it.k === 'wall' || it.k === 'fence' || it.k === 'hedge') {
       for (let i = 0; i + 3 < p.length; i += 2) {
         const ax = p[i], az = p[i + 1], bx = p[i + 2], bz = p[i + 3], L = Math.hypot(bx - ax, bz - az);

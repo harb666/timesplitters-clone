@@ -20,6 +20,7 @@ import { buildChurch } from './firvale/landmarks.js';
 import { buildStreetscape, plantTrees, parkCars, parkLots, setFleet } from './firvale/streetscape.js';
 import { ParkedFleet } from '../models/vehicles.js';
 import { buildCrossings, SIGNALS } from './firvale/crossings.js';
+import { prepareIslands, buildIslands } from './firvale/islands.js';
 import { landMask, groundMaterial, buildGround, buildFarTerrain } from './firvale/terrain.js';
 import { inPoly, flatToPts, centroid } from './firvale/geom.js';
 
@@ -142,7 +143,14 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   buildFarTerrain(scene, OSM.far, haze, sunDir);
 
   // ---- streets ----
+  const islands = prepareIslands(net, OSM, fp.list);
   net.build(batch, M);
+  const islandPolys = buildIslands(batch, M, world, net, islands);   // kerbed traffic islands where carriageways split
+  { // paint them as hard surface in the ground mask (no grass growing on them)
+    const g = mask.canvas.getContext('2d'); g.fillStyle = 'rgb(0,0,255)';
+    for (const P of islandPolys) { g.beginPath(); P.forEach(([x, z], i) => (i ? g.lineTo(x - mask.x0, z - mask.z0) : g.moveTo(x - mask.x0, z - mask.z0))); g.closePath(); g.fill(); }
+    mask.tex.needsUpdate = true;
+  }
 
   // ---- St Cuthbert's Church on its real footprint ----
   const churchB = fp.list.find((b) => b.type === 'skip');

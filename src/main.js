@@ -373,5 +373,5 @@ function wireUI() {
 
 initInput(document.getElementById('game'));
 wireUI();
-window.__firvale = game; // handy for debugging
+window.__firvale = game; game.input = input; // handy for debugging
 window.__input = input;

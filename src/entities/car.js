@@ -4,7 +4,6 @@
 // map at its edges.
 import { SIGNALS } from '../maps/firvale/crossings.js';
 import * as THREE from 'three';
-import { buildFalconR } from '../models/falconR.js';
 import { buildVehicle } from '../models/vehicles.js';
 import { EngineSound } from '../audio/engineSound.js';
 import { groundHeight as G } from '../core/world.js';
@@ -22,7 +21,8 @@ const DRIVER_LINES = {
 export class Car {
   constructor(scene, world, { net, paint, plate, speedBias = 0, hud, start = 0.3, others, focus, type = 'falcon', audible = true } = {}) {
     this.scene = scene; this.world = world; this.hud = hud; this.net = net; this.others = others || []; this.focus = focus;
-    const m = type === 'falcon' ? buildFalconR({ paint, plate }) : buildVehicle(type, { paint });
+    // (the 'falcon' is the local boy racer: a hot hatch on the realistic model, driven hard)
+    const m = buildVehicle(type === 'falcon' ? 'hatch' : type, { paint: typeof paint === 'number' ? '#' + paint.toString(16).padStart(6, '0') : paint });
     this.type = type; this.racer = type === 'falcon'; this.audible = audible;
     this.dims = m.dims || { L: 4.2, W: 1.9, H: 1.45 };
     Object.assign(this, m);

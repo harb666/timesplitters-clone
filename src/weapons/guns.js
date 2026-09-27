@@ -17,7 +17,7 @@ export class Kestrel extends FPWeapon {
     const model = buildAK(M);
     super(game, M, model, {
       id: 'ak', name: 'VK-9 KESTREL', magSize: 30, reserve: 150, flashSize: 0.16,
-      hip: { pos: [0.13, -0.105, -0.23], rot: [0.04, 0.06, -0.04] },
+      hip: { pos: [0.15, -0.118, -0.24], rot: [0.04, 0.08, -0.05] },
       sprint: { pos: [-0.07, -0.02, 0.05], rot: [-0.3, 0.9, 0.42] },
       eyeRelief: 0.42, aimFov: 50,
       rightHand: { pos: [0.028, -0.108, 0.058], finger: [0, 0.42, -1], palm: [-1, 0.05, 0], pose: 'trigger' },

@@ -22,7 +22,7 @@ import { blobShadowTexture } from '../textures/procedural.js';
 // slots: 0 skin, 1 hair, 2 top, 3 bottom, 4 shoes, 5 accent, 6 dark (eyes/soles)
 // opts (bit): 0 always, 1 long hair, 2 headscarf, 3 cap, 4 long skirt, 5 beard,
 //        6 coat, 7 backpack, 8 sleeping bag, 9 short hair, 10 carrier bag, 11 hood
-const J = { hip: 0.93, knee: 0.5, shoulderY: 1.42, shoulderX: 0.19, elbowY: 1.14, neck: 1.52, hipX: 0.095 };
+const J = { hip: 0.93, knee: 0.5, shoulderY: 1.42, shoulderX: 0.2, elbowY: 1.14, neck: 1.52, hipX: 0.095 };
 
 function part(geo, p, slot, opt = 0) {
   geo = geo.index ? geo.toNonIndexed() : geo;
@@ -47,6 +47,10 @@ function buildTemplate(q = 1) {
   // torso: waist, ribcage, chest, sloping shoulders (trapezius) into the neck
   const torso = lathe([[0.0, 1.0], [0.152, 1.0], [0.143, 1.07], [0.146, 1.14], [0.163, 1.24], [0.18, 1.33], [0.19, 1.39], [0.172, 1.44], [0.12, 1.485], [0.065, 1.51], [0.0, 1.515]], S(14, 8)); torso.scale(1, 1, 0.64);
   P.push(part(torso, 1, 2));
+  // zip-up jacket over the top (opt 12): a slightly fuller shell with a stand-up collar
+  const jacket = lathe([[0.0, 0.88], [0.172, 0.88], [0.165, 1.0], [0.16, 1.12], [0.177, 1.24], [0.195, 1.34], [0.2, 1.39], [0.182, 1.445], [0.13, 1.49], [0.075, 1.515], [0.0, 1.52]], S(14, 8)); jacket.scale(1.02, 1, 0.7);
+  P.push(part(jacket, 1, 5, 12));
+  P.push(part(T(new THREE.CylinderGeometry(0.066, 0.078, 0.06, S(12, 8), 1, true), 0, 1.525, -0.004).scale(1, 1, 0.9), 1, 5, 12));   // collar
   // coat: longer body down to mid-thigh
   const coat = lathe([[0.0, 0.66], [0.2, 0.66], [0.19, 0.95], [0.175, 1.15], [0.2, 1.4], [0.135, 1.48], [0.0, 1.49]], S(10, 7)); coat.scale(1.02, 1, 0.72);
   P.push(part(coat, 1, 5, 6));
@@ -229,6 +233,10 @@ const VERT_BODY = /* glsl */`
     // talking with the hands
     if (gest > 0.0) { shR += -0.55 * gest + 0.2 * sin(ph * 1.7) * gest; elR += -0.9 * gest + 0.35 * sin(ph * 2.3) * gest; shL += -0.25 * gest * max(0.0, sin(ph * 0.9)); }
     vec3 hipC = vec3(0.0, ${J.hip.toFixed(3)}, 0.0);
+    // walking: hips turn with the leading leg, shoulders counter-turn
+    float twist = sw * amp * 0.16 * (pose < 0.5 ? 1.0 : 0.0);
+    // standing about: a slow weight shift from foot to foot
+    float shift = (1.0 - min(gait, 1.0)) * (pose < 0.5 ? 1.0 : 0.0) * sin(ph * 0.23 + look * 3.0);
     // arms
     if (p > 2.5 && p < 6.5) {
       float sx = p < 4.5 ? -1.0 : 1.0;
@@ -244,6 +252,10 @@ const VERT_BODY = /* glsl */`
       if (p == 8.0 || p == 10.0) rotX(skP, objectNormal, kn, sx < 0.0 ? knL : knR);
       rotX(skP, objectNormal, hp, sx < 0.0 ? thL : thR);
     }
+    if (p < 0.5 || p > 6.5) rotY(skP, objectNormal, hipC, twist * 0.6);
+    else rotY(skP, objectNormal, hipC, -twist);
+    if (p > 6.5) { float sx = p < 8.5 ? -1.0 : 1.0; if (sx * shift > 0.0) rotX(skP, objectNormal, vec3(sx * ${J.hipX.toFixed(3)}, ${J.knee.toFixed(3)}, 0.0), 0.12 * abs(shift)); }
+    rotZ(skP, objectNormal, vec3(0.0, 0.0, 0.0), shift * 0.02);
     // head turn / nod
     if (p == 2.0) { rotY(skP, objectNormal, vec3(0.0, ${J.neck.toFixed(3)}, 0.0), look); if (pose > 2.5) rotX(skP, objectNormal, vec3(0.0, ${J.neck.toFixed(3)}, 0.0), 0.5); }
     // upper body lean + breathing
@@ -252,9 +264,11 @@ const VERT_BODY = /* glsl */`
     skP.y += drop + abs(cos(ph)) * 0.022 * min(gait, 1.0) * (pose < 0.5 ? 1.0 : 0.0);
     vec3 cols[7];
     cols[0] = iA.rgb; cols[1] = iB.rgb; cols[2] = iC.rgb; cols[3] = iD.rgb; cols[4] = iE.rgb; cols[5] = iF.rgb; cols[6] = vec3(0.02, 0.018, 0.016);
-    vSlotCol = cols[int(min(slot, 6.0) + 0.5)];
+    float sl2 = slot;
+    if (((flags >> 12) & 1) == 1 && slot > 1.5 && slot < 2.5 && part > 2.5 && part < 6.5) sl2 = 5.0;   // jacket sleeves
+    vSlotCol = cols[int(min(sl2, 6.0) + 0.5)];
     vFaceUv = fuv; vFace = slot > 6.5 ? 1.0 + float((flags >> 20) & 7) : 0.0;
-    vRest = position; vRestN = normal; vSlot = slot; vPart = part;
+    vRest = position; vRestN = normal; vSlot = sl2; vPart = part;
     if (slot > 6.5) vSlotCol = iA.rgb;
   }
 `;
@@ -462,6 +476,7 @@ export class Crowd {
       if (R() < (grp === 'pk' || grp === 'ye' ? 0.5 : 0.18) && !child) set(5);
     }
     if (R() < 0.3 || elder) { set(6); accent = flags & (1 << 2) ? accent : pick(['#3f3f46', '#1f2937', '#57534e', '#78350f', '#1e3a8a', '#44403c', '#0f172a'], R); }
+    if (!(flags & (1 << 6)) && !(flags & (1 << 2)) && !homeless && R() < 0.5) { set(12); accent = pick(['#1f2937', '#111827', '#3f3f46', '#1e3a8a', '#14532d', '#7c2d12', '#57534e', '#0f172a', '#6b7280', '#a16207'], R); }
     if (!child && R() < 0.15) set(7);
     if (!child && R() < 0.18) set(10);
     if (!female && R() < 0.12) set(11);
@@ -498,7 +513,7 @@ export class Crowd {
           ` + FRAG_BODY)
         .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = crowdRough;');
     };
-    mat.customProgramCacheKey = () => 'crowd-v3';
+    mat.customProgramCacheKey = () => 'crowd-v4';
     // two levels of detail sharing one material: close-up and further away
     this.lods = [1, 0].map((q) => {
       const geo = buildTemplate(q), ig = new THREE.BufferGeometry(), attrs = {};

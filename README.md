@@ -201,3 +201,12 @@ A workflow in `.github/workflows/pages.yml` publishes the game whenever
 `main` changes. Switch it on once in the repo: **Settings → Pages → Source:
 GitHub Actions**. The game then lives at
 `https://<your-username>.github.io/timesplitters-clone/`.
+
+## Credits
+
+- GIR model based on ["Robot Gir - Invader Zim"](https://sketchfab.com/3d-models/robot-gir-invader-zim-699b3590ca944d33b7dee659f5402d1a)
+  by [Rui Barbosa](https://sketchfab.com/ruibarbosa.art), licensed under
+  [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/). Changed for this
+  game: scaled to 0.6 m, materials simplified, parts bound to a skeleton and
+  animated (idle, walk, run, jump). GIR is a character from *Invader Zim*;
+  this is an unofficial fan game.

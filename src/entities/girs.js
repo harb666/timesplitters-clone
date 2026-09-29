@@ -130,7 +130,7 @@ export class Girs {
   }
 
   die(g, nx, nz) {
-    g.state = 'dead'; g.deadT = 0; this.killed++;
+    g.state = 'dead'; g.deadT = 0; this.killed++; g.flash = 0; if (g.body) g.body.emissive.setScalar(0);
     g.vel.set(nx * 3.5, 4.2, nz * 3.5); g.spin.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 14);
     for (const k of ['Idle', 'Walk', 'Run']) g.act[k].setEffectiveWeight(0);
     g.act.Jump.reset().setLoop(THREE.LoopOnce, 1); g.act.Jump.clampWhenFinished = true; g.act.Jump.setEffectiveWeight(1).play();

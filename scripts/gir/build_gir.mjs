@@ -8,9 +8,7 @@
 // logical part; each part is rigidly bound to its bone (robot joints).
 // Animations: Idle, Walk, Run (bouncy, arms flailing), Jump, Duty (red eyes pose).
 //
-// Usage (needs `npm i three@0.186` in this folder):
-//   node build_gir.mjs gir.glb --variant=green
-//   node glb2json.mjs gir.glb ../../src/models/gir.json   (the game loads the JSON form)
+// Usage: node build_gir.mjs [out.glb] [--variant=green]
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
@@ -22,6 +20,9 @@ globalThis.FileReader = class { readAsArrayBuffer(b) { b.arrayBuffer().then((r) 
 
 const out = process.argv[2] || 'gir.glb';
 const variant = (process.argv.find((a) => a.startsWith('--variant=')) || '').split('=')[1] || 'canon';
+// --mesh=model.gltf: use an external (unrigged) GIR mesh instead of the built-in
+// primitives, fitted to 0.6 m and bound part-by-part to this skeleton
+const MESH = (process.argv.find((a) => a.startsWith('--mesh=')) || '').split('=')[1] || '';
 
 // ------------------------------------------------------------------ materials
 const PAL = variant === 'green'
@@ -48,6 +49,10 @@ const H = {
   antennaY: 0.52,
 };
 const armLen = { upper: 0.07, fore: 0.065 };
+H.spineY = 0.2; H.chestY = 0.25;
+// joints of the external model (measured at 0.6 m tall): cone legs from the
+// hips, small body, ball shoulders, neck under the big bullet head
+if (MESH) Object.assign(H, { hipY: 0.106, hipX: 0.05, kneeY: 0.055, ankleY: 0.012, spineY: 0.13, chestY: 0.18, shoulderY: 0.221, shoulderX: 0.059, neckY: 0.222, headY0: 0.212, antennaY: 0.56 });
 
 // ------------------------------------------------------------------ skeleton
 const bones = {};
@@ -58,8 +63,8 @@ function bone(name, parent, pos) {
   b.userData.wp = wp; bones[name] = b; return b;
 }
 bone('Hips', null, [0, H.hipY, 0]);
-bone('Spine', 'Hips', [0, 0.2, 0]);
-bone('Chest', 'Spine', [0, 0.25, 0]);
+bone('Spine', 'Hips', [0, H.spineY, 0]);
+bone('Chest', 'Spine', [0, H.chestY, 0]);
 bone('Neck', 'Chest', [0, H.neckY, 0]);
 bone('Head', 'Neck', [0, H.headY0 + 0.02, 0]);
 bone('Jaw', 'Head', [0, 0.37, 0.1]);
@@ -69,7 +74,7 @@ bone('Antenna', 'Head', [0, H.antennaY, -0.01]);
 bone('Antenna_Tip', 'Antenna', [0, 0.575, -0.01]);
 for (const [s, n] of [[1, 'Left'], [-1, 'Right']]) {
   const x = s * H.shoulderX;
-  bone(n + 'Shoulder', 'Chest', [s * 0.068, H.shoulderY, 0]);
+  bone(n + 'Shoulder', 'Chest', [s * (MESH ? 0.04 : 0.068), H.shoulderY, 0]);
   bone(n + 'UpperArm', n + 'Shoulder', [x, H.shoulderY, 0]);
   bone(n + 'LowerArm', n + 'UpperArm', [x, H.shoulderY - armLen.upper, 0]);
   bone(n + 'Hand', n + 'LowerArm', [x, H.shoulderY - armLen.upper - armLen.fore, 0]);
@@ -191,6 +196,47 @@ function mergeParts(list) {
     for (let i = 0; i < p.count; i++) { pos.push(p.getX(i), p.getY(i), p.getZ(i)); nor.push(q.getX(i), q.getY(i), q.getZ(i)); uv.push(u.getX(i), u.getY(i)); }
     const I = g.index ? g.index.array : [...Array(p.count).keys()]; for (const i of I) idx.push(i + off); off += p.count; }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); void n; return g;
+}
+
+// ------------------------------------------------------------------ external mesh
+if (MESH) {
+  parts.length = 0;
+  globalThis.ProgressEvent ??= class extends Event { constructor(t, o = {}) { super(t); Object.assign(this, o); } };
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+  const src = await new GLTFLoader().parseAsync(fs.readFileSync(MESH, 'utf8'), '');
+  const sc = src.scene; sc.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(sc), k = 0.6 / (box.max.y - box.min.y), c = box.getCenter(new THREE.Vector3());
+  const fit = new THREE.Matrix4().makeScale(k, k, k).premultiply(new THREE.Matrix4().makeTranslation(0, 0, 0))
+    .multiply(new THREE.Matrix4().makeTranslation(-c.x, -box.min.y, -c.z));
+  // a handful of shared materials (fewer draw calls): silver body, teal
+  // joints/panel, glowing cyan eye lenses, black, red tongue
+  const X = {
+    Metal: new THREE.MeshStandardMaterial({ name: 'GIR_Metal', color: '#767b80', metalness: 0.35, roughness: 0.42 }),   // reads silver-grey in full sun
+    Teal: new THREE.MeshStandardMaterial({ name: 'GIR_Teal', color: '#2bbca1', emissive: '#2bbca1', emissiveIntensity: 0.25, roughness: 0.45 }),
+    Eye: new THREE.MeshStandardMaterial({ name: 'GIR_Eye', color: '#38ecca', emissive: '#38ecca', emissiveIntensity: 0.9, roughness: 0.2 }),
+    Black: new THREE.MeshStandardMaterial({ name: 'GIR_Black', color: '#060708', roughness: 0.5, side: THREE.DoubleSide }),   // thin eye rims / mouth line
+    Tongue: new THREE.MeshStandardMaterial({ name: 'GIR_Tongue', color: '#e8141c', roughness: 0.55 }),
+  };
+  const pick = (m) => {
+    const col = m.color, hsl = {}; col.getHSL(hsl);
+    if (col.r > 0.8 && col.g < 0.2) return X.Tongue;
+    if (hsl.l < 0.03) return X.Black;
+    if (hsl.s < 0.1) return X.Metal;
+    return hsl.l > 0.4 ? X.Eye : X.Teal;                 // brightest teal = the lenses (and the palm lights)
+  };
+  sc.traverse((o) => {
+    if (!o.isMesh) return;
+    const node = o.parent.name, M4 = new THREE.Matrix4().multiplyMatrices(fit, o.matrixWorld), g = o.geometry.clone().applyMatrix4(M4);
+    // mirrored parts (negative scale in the source) come out inside-out: re-wind them
+    if (M4.determinant() < 0) { if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]); const I = g.index.array; for (let i = 0; i < I.length; i += 3) { const t = I[i + 1]; I[i + 1] = I[i + 2]; I[i + 2] = t; } }
+    for (const a of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(a)) g.deleteAttribute(a);
+    if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+    g.computeBoundingBox(); const cx = (g.boundingBox.min.x + g.boundingBox.max.x) / 2, side = cx > 0 ? 'Left' : 'Right';
+    const b = /^PERNA/.test(node) ? side + 'UpperLeg' : /^BODY/.test(node) ? 'Chest' : /^(HEAD|group|BOLL)/.test(node) ? 'Head' : side + 'UpperArm';
+    let mat = pick(o.material);
+    if (/^group/.test(node) && mat === X.Teal) mat = X.Eye;          // both lenses glow the same (the source shades one darker)
+    add(node + '_' + o.material.name, g, mat, b);
+  });
 }
 
 // ------------------------------------------------------------------ assemble

@@ -96,6 +96,10 @@ export class Forearm {
       const fold = 1 + 0.06 * Math.sin(y * 38 + Math.sin(a * 3) * 2) * Math.max(0, (y - 0.45) / 0.55) + 0.02 * Math.sin(a * 5 + y * 9);
       P.setXYZ(i, x * fold * 1.08, 1 - y, z * fold * 0.86);                           // (lathe y runs wrist->elbow; flip so 0 = elbow, 1 = wrist)
     }
+    // the flip mirrors the tube, which turns its faces inside out: swap each
+    // triangle's winding so the outside faces the camera again (otherwise the
+    // near side is culled and the sleeve looks see-through on top)
+    const I = g.index.array; for (let i = 0; i < I.length; i += 3) { const t = I[i + 1]; I[i + 1] = I[i + 2]; I[i + 2] = t; }
     g.computeVertexNormals();
     this.mesh = new THREE.Mesh(boxUV(g, 4.5), M.sleeve);
     this.mesh.frustumCulled = false;

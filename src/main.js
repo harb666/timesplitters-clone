@@ -241,7 +241,7 @@ function boot() {
     pigeons.update(dt, player);
     girs.update(dt);
     grass.update(dt, player.pos);
-    minimap.update(player, game.cars, dez, mission.target());
+    minimap.update(player, game.cars, dez, mission.target(), girs);
     for (const n of game.npcs) n.update(dt, player);
     props.update(dt);
     effects.update(dt);

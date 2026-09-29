@@ -39,7 +39,7 @@ export class Minimap {
     this.base = c; this.X = X; this.Z = Z; this.t = 0;
   }
 
-  update(player, cars, dez, target) {
+  update(player, cars, dez, target, girs = null) {
     this.t -= 1; if (this.t > 0) return; this.t = 4; // ~15 fps is plenty
     const g = this.ctx, S = this.el.width, R = S / 2, zoom = 0.75;
     g.save(); g.clearRect(0, 0, S, S);
@@ -64,6 +64,11 @@ export class Minimap {
     const dot = (x, z, col, r = 5) => { g.fillStyle = col; g.beginPath(); g.arc(this.X(x) - this.X(player.pos.x), this.Z(z) - this.Z(player.pos.z), r, 0, 7); g.fill(); };
     for (const c of cars) if (c.car.visible) dot(c.x, c.z, '#ff5a5a');
     if (dez) dot(dez.x, dez.z, '#ffb400', 6);
+    // GIRs: green with a dark ring (flashing while one is chasing you)
+    if (girs) for (const q of girs.list) if (q.state !== 'dead') {
+      if (q.state === 'chase' && Math.floor(performance.now() / 250) % 2) continue;
+      dot(q.pos.x, q.pos.z, '#111', 6.5); dot(q.pos.x, q.pos.z, '#4dff7a', 4.5);
+    }
     g.restore();
     // objective marker (clamped to the rim when off the map)
     if (target) {

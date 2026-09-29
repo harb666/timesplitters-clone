@@ -65,8 +65,10 @@ export class World {
   near(x, z, r, out) {
     out.length = 0;
     const x0 = Math.floor((x - r) / CELL), x1 = Math.floor((x + r) / CELL), z0 = Math.floor((z - r) / CELL), z1 = Math.floor((z + r) / CELL);
-    for (let ix = x0; ix <= x1; ix++) for (let iz = z0; iz <= z1; iz++) { const c = this.grid.get(this._key(ix, iz)); if (c) for (const b of c) if (b._q !== this._qid) { b._q = this._qid; out.push(b); } }
-    this._qid = (this._qid || 0) + 1;
+    // fresh query id first (raycastBoxes shares the counter; marking with a stale
+    // id made boxes the last ray touched look "already collected" and get skipped)
+    const qid = (this._qid = (this._qid || 0) + 1);
+    for (let ix = x0; ix <= x1; ix++) for (let iz = z0; iz <= z1; iz++) { const c = this.grid.get(this._key(ix, iz)); if (c) for (const b of c) if (b._q !== qid) { b._q = qid; out.push(b); } }
     for (const b of this.dynamic) out.push(b);
     return out;
   }

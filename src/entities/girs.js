@@ -48,7 +48,8 @@ export class Girs {
     this.load = new GLTFLoader().loadAsync(MODEL_URL).then((gltf) => {
       this.template = rigidify(gltf.scene); this.clips = gltf.animations;
       const used = [];
-      for (let i = 0; i < count; i++) { const p = this.spot(sp.x, sp.z, 35, 200, used); if (p) { used.push(p); this.spawn(p); } }
+      // the first one just up the street from where you start, the rest further out
+      for (let i = 0; i < count; i++) { const p = i === 0 ? this.spot(sp.x, sp.z, 14, 28, used) : this.spot(sp.x, sp.z, 35, 200, used); if (p) { used.push(p); this.spawn(p); } }
       this.ready = true;
     }).catch((e) => console.warn('GIR model failed to load', e));
   }

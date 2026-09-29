@@ -1,7 +1,7 @@
 // Street furniture, trees and parked cars.
 import * as THREE from 'three';
 import { groundHeight as G } from '../../core/world.js';
-import { Frame, rng } from './buildings.js';
+import { Frame, rng, shrinkTex } from './buildings.js';
 import { boxUV } from '../../models/shapes.js';
 import { DRIVABLE } from './roads.js';
 import { addParkedVehicle, pickType, pickPaint } from '../../models/vehicles.js';
@@ -18,7 +18,7 @@ export function nameAtlas(names) {
     g.font = 'bold 42px Arial, sans-serif'; g.fillText(n.toUpperCase(), x + W / 2, y + 38, W - 30);
     g.font = 'bold 18px Arial, sans-serif'; g.fillText(n.includes('Herries') || n.includes('Firth') || (n.includes('Barnsley') && false) ? 'S5' : 'S4', x + W / 2, y + 74);
   });
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const t = shrinkTex(new THREE.CanvasTexture(c)); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return { tex: t, cell: (i) => ({ u0: (i % cols) / cols, u1: ((i % cols) + 1) / cols, v1: 1 - Math.floor(i / cols) / rows, v0: 1 - (Math.floor(i / cols) + 1) / rows }) };
 }
 function quadUV(w, h, c) {

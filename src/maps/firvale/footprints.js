@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { groundHeight as G } from '../../core/world.js';
 import { tiledBox, StaticBatch, CHUNK } from '../../models/builders.js';
-import { Frame, rng, atlasQuad, DISPLAY } from './buildings.js';
+import { Frame, rng, atlasQuad, DISPLAY, shrinkTex } from './buildings.js';
 import { area, centroid, obb, clip, triangulate, Mesher, flatToPts, inPoly } from './geom.js';
 
 const RES = new Set(['house', 'terrace', 'semidetached_house', 'detached', 'residential', 'apartments', 'bungalow']);
@@ -967,7 +967,7 @@ function hospitalSign(name) {
 }
 export function hospitalSignMaterial() {
   if (!SIGNS) return null;
-  const t = new THREE.CanvasTexture(SIGNS.c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const t = shrinkTex(new THREE.CanvasTexture(SIGNS.c)); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return new THREE.MeshStandardMaterial({ map: t, roughness: 0.5, vertexColors: true, name: 'hospSign' });
 }
 const HOSP_OLD = /Clock Tower|Coleridge|North House|Estate|Laundry|Vickers|Nurses|Community House|Occupational|Rivermead|Therapy|Unison|Longley/;

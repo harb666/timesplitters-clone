@@ -108,6 +108,15 @@ export const SHOPS = [
   ['COMMUNITY HUB', 'ADVICE · CLASSES · FOOD BANK', '#155e75', '#ecfeff', 'community'],
   ['TO LET', 'ALL ENQUIRIES 0114 000 0000', '#e9e6dd', '#c0392b', 'tolet'],
 ];
+// Redraw a canvas texture at a fraction of its size before it's uploaded.
+// Big text atlases cost a lot of graphics memory (a 2048 px canvas is 11 MB
+// once mipmapped) and phones drop the whole 3-D view when they run out.
+export function shrinkTex(t, k = 0.5) {
+  const src = t.image, c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(src.width * k)); c.height = Math.max(1, Math.round(src.height * k));
+  const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0, c.width, c.height);
+  t.image = c; t.needsUpdate = true; return t;
+}
 export function signAtlas() {
   const cols = 4, rows = Math.ceil(SHOPS.length / cols), W = 512, H = 96;
   const [c, g] = canvas(cols * W, rows * H);
@@ -123,7 +132,7 @@ export function signAtlas() {
     if (cat === 'pharmacy') { g.fillStyle = '#16a34a'; g.fillRect(x + 14, y + 28, 36, 12); g.fillRect(x + 26, y + 16, 12, 36); }
     for (let k = 0; k < 40; k++) { g.fillStyle = `rgba(0,0,0,${Math.random() * 0.08})`; g.fillRect(x + Math.random() * W, y + Math.random() * H, 2 + Math.random() * 20, 1 + Math.random() * 3); }
   });
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const t = shrinkTex(new THREE.CanvasTexture(c)); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   const cell = (i) => ({ u0: (i % cols) / cols, u1: ((i % cols) + 1) / cols, v1: 1 - Math.floor(i / cols) / rows, v0: 1 - (Math.floor(i / cols) + 1) / rows });
   return { tex: t, cols, rows, count: SHOPS.length, cells, cell };
 }

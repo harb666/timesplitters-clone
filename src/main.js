@@ -52,6 +52,19 @@ function boot() {
   renderer.toneMappingExposure = 1.0;
   if (q.shadows) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap; }
   renderer.autoClear = false;
+  // If the phone runs out of graphics memory, Safari throws the 3-D view away
+  // (the screen goes black while the rest keeps running). Say so, and restart
+  // one quality step lighter so it doesn't happen again.
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    game.paused = true; setInputEnabled(false); suspendAudio(true);
+    const lighter = { high: 'medium', medium: 'low', low: 'low' }[settings.quality] || 'low';
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;inset:0;z-index:99;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(10,12,16,.92);color:#fff;font:600 16px/1.4 Arial,sans-serif;text-align:center;padding:24px';
+    el.innerHTML = `<div>Your phone ran out of graphics memory.</div><div style="opacity:.75;font-size:14px">Tap to restart the game${lighter !== settings.quality ? ' on <b>' + lighter + '</b> graphics' : ''}.</div>`;
+    el.addEventListener('click', () => { settings.quality = lighter; saveSettings(); location.reload(); });
+    document.body.appendChild(el);
+  }, false);
   renderer.info.autoReset = false; // we render two passes per frame; count both
 
   const scene = new THREE.Scene();

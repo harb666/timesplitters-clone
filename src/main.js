@@ -23,6 +23,7 @@ import { Crowd } from './entities/crowd.js';
 import { Pigeons } from './entities/pigeons.js';
 import { GrassField } from './render/grass.js';
 import { Girs } from './entities/girs.js';
+import { ZimHouse } from './maps/firvale/zimHouse.js';
 
 const QUALITY = {
   low: { dpr: 1, fogNear: 90, fogFar: 420, aa: false, shadows: 0 },
@@ -118,6 +119,8 @@ function boot() {
   const crowd = new Crowd(scene, world, map, hud, { count: settings.quality === 'low' ? 80 : 120 });
   game.crowd = crowd;
   const grass = new GrassField(scene, map.grassAt, settings.quality);
+  // Zim's house on Wade Street
+  game.zim = new ZimHouse(game);
   // GIRs on the loose
   const girs = new Girs(game, map, { count: settings.quality === 'low' ? 4 : 6 });
   game.girs = girs;
@@ -223,6 +226,7 @@ function boot() {
 
     player.adsK = arsenal.adsK;
     player.update(dt);
+    game.zim.update(dt);
     const autoFire = settings.autoFire && !!target;
     arsenal.update(dt, {
       fire: input.fire || autoFire, firePressed: input.firePressed || (autoFire && !game._autoWas), aim: input.aim,
@@ -365,6 +369,7 @@ function wireUI() {
     await Promise.all([
       initSoundscape({ quality: settings.quality, onProgress: (k) => { loading.textContent = `Recording the soundscape… ${Math.round(k * 100)}%`; } }),
       game.girs.load,                                   // GIRs are on the streets from the first frame
+      game.zim.load,
     ]);
     loading.textContent = 'Ready.';
     if (settings.gyro) requestGyro();

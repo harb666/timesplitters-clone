@@ -210,3 +210,10 @@ GitHub Actions**. The game then lives at
   game: scaled to 0.6 m, materials simplified, parts bound to a skeleton and
   animated (idle, walk, run, jump). GIR is a character from *Invader Zim*;
   this is an unofficial fan game.
+- Zim's house (Wade Street) based on ["Invader Zim House Exterior"](https://sketchfab.com/3d-models/invader-zim-house-exterior-e8e5badedb7e4f43bb5143acdf5209f9)
+  and "Zim House Interior" by [armasyll](https://sketchfab.com/armasyll),
+  licensed under [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
+  Changed for this game: scaled 1.1×, the stand-in neighbouring walls,
+  pavement and lawn replaced by the real street (the pipes plug into the
+  neighbouring semis), fence and gnomes fitted to the plot, and the interior
+  made walkable behind the front door.

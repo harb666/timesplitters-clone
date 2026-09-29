@@ -85,7 +85,7 @@ export class World {
   floorAt(x, z, feetY, step, radius = 0) {
     let y = groundHeight(x, z);
     for (const b of this.near(x, z, radius + 1, this._tmp || (this._tmp = []))) {
-      if (b.ghost || b.maxY > feetY + step || b.maxY <= y) continue;
+      if (b.ghost || b.off || b.maxY > feetY + step || b.maxY <= y) continue;
       if (b.rot) {
         const [lx, lz] = World.local(b, x, z);
         if (Math.abs(lx) >= b.hw + radius || Math.abs(lz) >= b.hd + radius) continue;
@@ -99,7 +99,7 @@ export class World {
   collideCylinder(pos, radius, feetY, height, step) {
     let hit = null;
     for (const b of this.near(pos.x, pos.z, radius + 1, this._tmp2 || (this._tmp2 = []))) {
-      if (b.ghost || b.maxY <= feetY + step || b.minY >= feetY + height) continue;     // ghost: shootable, not solid
+      if (b.ghost || b.off || b.maxY <= feetY + step || b.minY >= feetY + height) continue;     // ghost: shootable, not solid; off: switched out (e.g. Zim's interior while you're outside)
       let px, pz, minX, maxX, minZ, maxZ;
       if (b.rot) { [px, pz] = World.local(b, pos.x, pos.z); minX = -b.hw; maxX = b.hw; minZ = -b.hd; maxZ = b.hd; }
       else { px = pos.x; pz = pos.z; minX = b.minX; maxX = b.maxX; minZ = b.minZ; maxZ = b.maxZ; }
@@ -135,7 +135,7 @@ export class World {
     }
     for (const b of this.dynamic) cand.push(b);
     for (const b of cand) {
-      if (accept && !accept(b)) continue;
+      if (b.off || (accept && !accept(b))) continue;
       let o = [ox, oy, oz], d = [dx, dy, dz], mn, mx;
       if (b.rot) {
         const [lx, lz] = World.local(b, ox, oz);

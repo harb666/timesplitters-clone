@@ -7,8 +7,8 @@ const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftsha
 const p = await b.newPage({ viewport: { width: 1000, height: 800 } });
 p.on('pageerror', (e) => console.log('PAGEERROR', e.message));
 await p.addInitScript(() => { try { localStorage.setItem('firvale.settings.v1', JSON.stringify({ quality: 'low' })); } catch (e) {} });
-await p.goto('http://localhost:8773/index.html');
-await p.waitForFunction(() => !document.getElementById('btn-start').disabled, null, { timeout: 180000 });
+await p.goto('http://localhost:8773/index.html', { waitUntil: 'commit', timeout: 120000 });
+await p.waitForFunction(() => window.__firvale && !document.getElementById('btn-start').disabled, null, { timeout: 180000 });
 await p.evaluate(([x, z, h, tilt]) => {
   const g = window.__firvale; g.frozen = true; document.getElementById('title').style.display = 'none';
   const cam = g.camera; cam.fov = 60; cam.aspect = 1000 / 800; cam.far = 3000; cam.updateProjectionMatrix();

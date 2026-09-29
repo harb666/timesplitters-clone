@@ -362,7 +362,10 @@ function wireUI() {
     setVolume(settings.volume);
     // Render the sound library (a second or two) before play starts.
     startBtn.disabled = true;
-    await initSoundscape({ quality: settings.quality, onProgress: (k) => { loading.textContent = `Recording the soundscape… ${Math.round(k * 100)}%`; } });
+    await Promise.all([
+      initSoundscape({ quality: settings.quality, onProgress: (k) => { loading.textContent = `Recording the soundscape… ${Math.round(k * 100)}%`; } }),
+      game.girs.load,                                   // GIRs are on the streets from the first frame
+    ]);
     loading.textContent = 'Ready.';
     if (settings.gyro) requestGyro();
     for (const c of game.cars) c.startAudio();

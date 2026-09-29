@@ -1,4 +1,4 @@
-// GIR: little rogue robots loose on the streets. The model (src/models/gir.json)
+// GIR: little rogue robots loose on the streets. The model (src/models/gir.glb.js)
 // is a rigged glTF with Idle / Walk / Run / Jump clips. Each GIR mooches about
 // on his patch of pavement until he spots you (or hears gunfire), then sprints
 // at you with his arms flailing, screaming, and bites your ankles. Shoot him
@@ -10,7 +10,14 @@ import { mergeGeometries } from '../lib/addons/utils/BufferGeometryUtils.js';
 import { groundHeight as G } from '../core/world.js';
 import { play } from '../audio/soundscape.js';
 
-const MODEL_URL = new URL('../models/gir.json', import.meta.url).href;   // glTF, buffer embedded
+import GIR_GLB from '../models/gir.glb.js';                   // the model, as a script (base64 .glb)
+
+// decode and parse as soon as the code loads (no network fetch, so no host can block it)
+const MODEL = new Promise((res, rej) => {
+  const bin = atob(GIR_GLB), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  new GLTFLoader().parse(u8.buffer, '', res, rej);
+});
 const HP = 60, RUN = 5.8, WALK = 1.1, SEE = 30, LOSE = 75, BITE = 7;
 const HALF = 0.26, TALL = 0.62;          // hit box (a touch bigger than him, to be fair on a phone)
 const FAR = 170;                          // beyond this he's a speck in the haze: not drawn
@@ -45,13 +52,13 @@ export class Girs {
     let seed = 20260929; this.R = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     const net = map.net, sp = map.spawn;
     this.roads = net.roads.filter((r) => (r.kind === 'r' || r.kind === 'b' || r.kind === 'a') && r.length > 16);
-    this.load = new GLTFLoader().loadAsync(MODEL_URL).then((gltf) => {
+    this.load = MODEL.then((gltf) => {
       this.template = rigidify(gltf.scene); this.clips = gltf.animations;
       const used = [];
       // the first one just up the street from where you start, the rest further out
       for (let i = 0; i < count; i++) { const p = i === 0 ? this.ahead(sp) : this.spot(sp.x, sp.z, 35, 200, used); if (p) { used.push(p); this.spawn(p); } }
       this.ready = true;
-    }).catch((e) => console.warn('GIR model failed to load', e));
+    }).catch((e) => { console.warn('GIR model failed to load', e); this.game.hud?.toast('GIR failed to load: ' + (e && e.message || e), 6); });
   }
 
   // a pavement spot rMin..rMax from (x,z), not too close to other GIRs
@@ -137,6 +144,10 @@ export class Girs {
     play('gir_scream', { pos: g.pos.clone().setY(g.pos.y + 0.4), gain: 1.1, rate: 1.15, rolloff: 0.8 });
     const c = g.collider; c.minX = c.maxX = c.minZ = c.maxZ = 1e5;
     this.game.addScore(75, 'GIR DOWN!');
+    // straight away another one turns up down the street and comes for you
+    const P = this.game.player.pos, alive = this.list.filter((o) => o.state !== 'dead').map((o) => o.pos);
+    const p = this.spot(P.x, P.z, 25, 60, alive) || this.spot(P.x, P.z, 25, 120, alive);
+    if (p) { const n = this.spawn(p); this.alert(n); n.t = -0.6; }
   }
 
   // one-off burst when a dead GIR hits the ground
@@ -237,11 +248,6 @@ export class Girs {
       this.game.scene.remove(g.root);
       const i = this.game.world.dynamic.indexOf(g.collider); if (i >= 0) this.game.world.dynamic.splice(i, 1);
       this.list.splice(this.list.indexOf(g), 1);
-      // a new one turns up somewhere out of sight a little later
-      setTimeout(() => {
-        const P = this.game.player.pos, p = this.spot(P.x, P.z, 60, 180, this.list.map((o) => o.pos));
-        if (p) this.spawn(p);
-      }, 10000);
     }
   }
 }

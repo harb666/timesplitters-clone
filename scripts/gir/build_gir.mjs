@@ -8,7 +8,13 @@
 // logical part; each part is rigidly bound to its bone (robot joints).
 // Animations: Idle, Walk, Run (bouncy, arms flailing), Jump, Duty (red eyes pose).
 //
-// Usage: node build_gir.mjs [out.glb] [--variant=green]
+// Usage (needs `npm i three@0.186` in this folder):
+//   node build_gir.mjs gir.glb [--variant=green]          built-in primitive GIR
+//   node build_gir.mjs gir.glb --mesh=robot_gir.gltf      external mesh on this skeleton + clips
+//   node glb2js.mjs gir.glb ../../src/models/gir.glb.js   (the game imports the model as a script)
+// The game's GIR uses --mesh with "Robot Gir - Invader Zim" by Rui Barbosa
+// (CC BY 4.0, https://sketchfab.com/3d-models/robot-gir-invader-zim-699b3590ca944d33b7dee659f5402d1a),
+// its spec/gloss materials converted to metal/rough and the .bin embedded as a data URI.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';

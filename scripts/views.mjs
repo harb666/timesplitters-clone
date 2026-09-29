@@ -12,8 +12,8 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const page = await browser.newPage({ viewport: { width: 844, height: 390 } });
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'log') console.log(`[${m.type()}] ${m.text()}`.slice(0, 400)); });
 page.on('pageerror', (e) => console.log('[pageerror] ' + e.stack));
-await page.goto('http://localhost:8767/index.html' + query);
-await page.waitForFunction(() => !document.getElementById('btn-start').disabled, null, { timeout: 300000 });
+await page.goto('http://localhost:8767/index.html' + query, { waitUntil: 'commit', timeout: 120000 });
+await page.waitForFunction(() => window.__firvale && !document.getElementById('btn-start').disabled, null, { timeout: 300000 });
 await page.click('#btn-start');
 await page.waitForFunction(() => window.__firvale.running, null, { timeout: 120000 });
 if (!process.env.HUD) await page.addStyleTag({ content: '#hud, #subtitle, #bubbles, .subtitle, #toast { display: none !important; }' });

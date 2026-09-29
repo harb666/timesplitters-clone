@@ -49,7 +49,7 @@ export class Girs {
       this.template = rigidify(gltf.scene); this.clips = gltf.animations;
       const used = [];
       // the first one just up the street from where you start, the rest further out
-      for (let i = 0; i < count; i++) { const p = i === 0 ? this.spot(sp.x, sp.z, 14, 28, used) : this.spot(sp.x, sp.z, 35, 200, used); if (p) { used.push(p); this.spawn(p); } }
+      for (let i = 0; i < count; i++) { const p = i === 0 ? this.ahead(sp) : this.spot(sp.x, sp.z, 35, 200, used); if (p) { used.push(p); this.spawn(p); } }
       this.ready = true;
     }).catch((e) => console.warn('GIR model failed to load', e));
   }
@@ -67,6 +67,16 @@ export class Girs {
       return { x: q.x, z: q.z };
     }
     return null;
+  }
+
+  // clear ground in front of the player's start, so you meet one straight away
+  ahead(sp) {
+    const fx = -Math.sin(sp.yaw), fz = -Math.cos(sp.yaw), rx = -fz, rz = fx;
+    for (const d of [20, 16, 24, 28, 12]) for (const o of [0, 2, -2, 4, -4]) {
+      const probe = { x: sp.x + fx * d + rx * o, z: sp.z + fz * d + rz * o }, x = probe.x, z = probe.z;
+      if (!this.game.world.collideCylinder(probe, 0.4, G(x, z), TALL, 0.35)) return { x, z };
+    }
+    return this.spot(sp.x, sp.z, 12, 40);
   }
 
   spawn(p) {

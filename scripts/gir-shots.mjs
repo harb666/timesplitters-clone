@@ -13,8 +13,8 @@ await page.goto('http://localhost:8768/index.html', { waitUntil: 'commit', timeo
 await page.waitForFunction(() => window.__firvale && !document.getElementById('btn-start').disabled, null, { timeout: 300000 });
 await page.click('#btn-start');
 await page.waitForFunction(() => window.__firvale.running && window.__firvale.girs.ready, null, { timeout: 120000 });
-console.log(await page.evaluate(() => JSON.stringify(window.__firvale.girs.list.map((g) => [g.pos.x.toFixed(0), g.pos.z.toFixed(0), g.state]))));
-const steps = [
+console.log('spawn', await page.evaluate(() => JSON.stringify(window.__firvale.map.spawn))); console.log(await page.evaluate(() => JSON.stringify(window.__firvale.girs.list.map((g) => [g.pos.x.toFixed(0), g.pos.z.toFixed(0), g.state]))));
+const steps = process.env.LIST ? [] : [
   ['near', `const g = G.girs.list[1]; G.girs.list.forEach((o) => o.state = 'idle'); G.girs.alert = () => {}; const a = g.yaw; const x = g.pos.x + Math.sin(a) * 2.6, z = g.pos.z + Math.cos(a) * 2.6; p.spawn(x, z, Math.atan2(x - g.pos.x, z - g.pos.z) - 0.35); p.pitch = -0.28; G.advance(0.3);`],
   ['run', `const g = G.girs.list[1]; delete G.girs.alert; G.girs.alert(g); const a = g.yaw; const x = g.pos.x + Math.sin(a) * 6, z = g.pos.z + Math.cos(a) * 6; p.spawn(x, z, Math.atan2(x - g.pos.x, z - g.pos.z) - 0.3); p.pitch = -0.2; G.advance(0.5);`],
   ['bite', `G.advance(2.5);`],

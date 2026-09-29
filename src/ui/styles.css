@@ -213,3 +213,7 @@ button.round.on { background: rgba(255,210,74,.35); border-color: #ffd24a; }
 #stick-knob { background: rgba(255,255,255,.35); border: 1.5px solid rgba(255,255,255,.85); }
 #prompt { background: rgba(0,0,0,.55); border: 0; border-radius: 3px; font-weight: 600; }
 #toast { color: #fff; font-weight: 800; }
+
+/* GIR status under the minimap (how many are out, how far the nearest is) */
+#gir-status { position: absolute; left: calc(10px + var(--safe-l)); top: calc(128px + var(--safe-t)); font: 700 11px/1.2 Arial, sans-serif; color: #4dff7a; text-shadow: 0 1px 2px #000, 0 0 4px #000; pointer-events: none; white-space: nowrap; }
+.touch-mode #gir-status { top: calc(120px + var(--safe-t)); }

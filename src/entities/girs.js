@@ -58,8 +58,12 @@ export class Girs {
       // the first one just up the street from where you start, the rest further out
       for (let i = 0; i < count; i++) { const p = i === 0 ? this.ahead(sp) : this.spot(sp.x, sp.z, 35, 200, used); if (p) { used.push(p); this.spawn(p); } }
       this.ready = true;
-    }).catch((e) => { console.warn('GIR model failed to load', e); this.game.hud?.toast('GIR failed to load: ' + (e && e.message || e), 6); });
+      this.status(this.list.length ? '' : 'GIR: no clear spots to spawn');
+    }).catch((e) => { console.warn('GIR model failed to load', e); this.status('GIR failed to load: ' + (e && e.message || e)); this.game.hud?.toast('GIR failed to load', 6); });
   }
+
+  // the line under the minimap: loading / errors / how many are out and the nearest
+  status(msg) { const el = typeof document !== 'undefined' && document.getElementById('gir-status'); if (el && msg) el.textContent = msg; this.err = msg || this.err; }
 
   // a pavement spot rMin..rMax from (x,z), not too close to other GIRs
   spot(x, z, rMin, rMax, used = []) {
@@ -163,7 +167,17 @@ export class Girs {
   }
 
   update(dt) {
-    if (!this.ready) return;
+    if (!this.ready || this.broken) return;
+    try { this.step(dt); } catch (e) { this.broken = true; console.error(e); this.status('GIR error: ' + e.message); }
+    this.statusT = (this.statusT || 0) - dt;
+    if (this.statusT <= 0 && !this.broken) {
+      this.statusT = 0.5; const P = this.game.player.pos; let n = 0, near = Infinity;
+      for (const g of this.list) if (g.state !== 'dead') { n++; near = Math.min(near, Math.hypot(g.pos.x - P.x, g.pos.z - P.z)); }
+      this.status(n ? `GIR ×${n} · nearest ${Math.round(near)} m` : 'GIR ×0');
+    }
+  }
+
+  step(dt) {
     const game = this.game, world = game.world, pl = game.player, P = pl.pos;
     for (const g of this.list) {
       const dx = P.x - g.pos.x, dz = P.z - g.pos.z, dist = Math.hypot(dx, dz);

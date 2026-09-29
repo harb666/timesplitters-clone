@@ -29,6 +29,26 @@ function toGun() {
   return m;
 }
 
+// The textures ship as plain .jpg files next to the model and are loaded as
+// ordinary images: the glTF loader's own route for embedded images (blob URLs
+// through fetch) is blocked on some hosts, which left the gun untextured.
+const texLoader = new THREE.TextureLoader(), texCache = new Map();
+function tex(name, srgb) {
+  const key = name + srgb; if (texCache.has(key)) return texCache.get(key);
+  const t = texLoader.load(new URL('../../models/grizzly/' + name, import.meta.url).href);
+  t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 4;
+  texCache.set(key, t); return t;
+}
+function dress(mat) {
+  const T = mat.userData && mat.userData.textures; if (!T || mat.userData.dressed) return mat;
+  if (T.map) mat.map = tex(T.map, true);
+  if (T.normal) mat.normalMap = tex(T.normal, false);
+  if (T.metalRough) { mat.roughnessMap = mat.metalnessMap = tex(T.metalRough, false); }
+  if (T.ao) mat.aoMap = tex(T.ao, false);
+  mat.userData.dressed = true; mat.needsUpdate = true;
+  return mat;
+}
+
 function parse() {
   const bin = atob(GLB), u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
@@ -83,7 +103,7 @@ export function buildGrizzly() {
 
   model.ready = parse().then((gltf) => {
     const T = toGun(); gltf.scene.updateMatrixWorld(true);
-    const meshes = {}; gltf.scene.traverse((o) => { if (o.isMesh) meshes[o.name] = o; });
+    const meshes = {}; gltf.scene.traverse((o) => { if (o.isMesh) { dress(o.material); meshes[o.name] = o; } });
     const bake = (o) => { const g = o.geometry.clone(); g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(T, o.matrixWorld)); return g; };
     const add = (parent, geo, mat) => { const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; parent.add(m); return m; };
     // body -> slide + frame (the barrel sticking out the front stays with the frame)

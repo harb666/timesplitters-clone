@@ -117,6 +117,18 @@ export class Girs {
   // aim-assist targets (chest height)
   targets() { return this.list.filter((g) => g.state !== 'dead' && g.root.visible).map((g) => g.pos.clone().setY(g.pos.y + 0.32)); }
 
+  // after you respawn: any GIR near the spot goes back to mooching about on
+  // a patch of its own further off, so it can't bite you again straight away
+  clearAround(x, z, r = 45) {
+    for (const g of this.list) {
+      if (g.state === 'dead' || Math.hypot(g.pos.x - x, g.pos.z - z) > r) continue;
+      const p = this.spot(x, z, 60, 160, this.list.map((o) => o.pos));
+      if (!p) continue;
+      g.pos.set(p.x, G(p.x, p.z), p.z); g.home = { x: p.x, z: p.z }; g.vel.set(0, 0, 0);
+      g.state = 'idle'; g.t = -2; g.root.position.copy(g.pos);
+    }
+  }
+
   onLoudNoise(x, z) {
     for (const g of this.list) if (g.state !== 'dead' && g.state !== 'chase' && Math.hypot(g.pos.x - x, g.pos.z - z) < 60) this.alert(g);
   }

@@ -43,12 +43,30 @@ export function initAudio() {
   // Unlock on iOS: play one silent buffer inside the gesture.
   const b = ctx.createBuffer(1, 1, 22050); const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0);
   ctx.resume();
+  // iPhones mute Web Audio when the ring/silent switch is on, unless a normal
+  // <audio> element is playing: a looping silent clip, started inside this
+  // tap, moves the page into "playback" mode so the game is heard.
+  try {
+    silentEl = new Audio(new URL('../../assets/silence.wav', import.meta.url).href);
+    silentEl.loop = true; silentEl.setAttribute('playsinline', ''); silentEl.volume = 0.01;
+    silentEl.play().catch(() => {});
+  } catch (e) { /* no media element */ }
+  // if the phone suspends or interrupts audio (call, lock screen, other app),
+  // the next touch brings it back
+  const wake = () => { if (ctx && ctx.state !== 'running' && !audioHeld) ctx.resume(); if (silentEl && silentEl.paused && !audioHeld) silentEl.play().catch(() => {}); };
+  for (const ev of ['touchend', 'pointerup', 'keydown']) window.addEventListener(ev, wake, { passive: true });
   startAmbience();
+}
+let silentEl = null, audioHeld = false;
+// "Sound: running" etc. for the settings screen
+export function audioStatus() {
+  if (!ctx) return 'not started';
+  return ctx.state + (silentEl ? (silentEl.paused ? ', media paused' : ', media on') : '') + ` · ${Math.round(ctx.sampleRate / 1000)} kHz`;
 }
 
 export function setVolume(v) { volume = v; if (master) master.gain.setTargetAtTime(v, ctx.currentTime, 0.05); }
 
-export function suspendAudio(yes) { if (!ctx) return; if (yes) ctx.suspend(); else ctx.resume(); }
+export function suspendAudio(yes) { if (!ctx) return; audioHeld = yes; if (yes) { ctx.suspend(); silentEl?.pause(); } else { ctx.resume(); silentEl?.play().catch(() => {}); } }
 
 function makeNoise(seconds, kind) {
   const len = Math.floor(ctx.sampleRate * seconds);

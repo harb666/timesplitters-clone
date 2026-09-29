@@ -16,7 +16,7 @@ import { Dez } from './entities/dez.js';
 import { Props } from './entities/props.js';
 import { Effects } from './entities/effects.js';
 import { Hud } from './ui/hud.js';
-import { initAudio, updateListener, setVolume, sfx, makeHum, suspendAudio } from './audio/audio.js';
+import { initAudio, updateListener, setVolume, sfx, makeHum, suspendAudio, audioStatus } from './audio/audio.js';
 import { MissionRunner, freeRoam } from './core/missions.js';
 import { makeSky, SUN_DIR } from './render/sky.js';
 import { Crowd } from './entities/crowd.js';
@@ -159,6 +159,7 @@ function boot() {
     hud.subtitle('<b>Respawning at the Mini Mart…</b> (checkpoint)', 2.5);
     setTimeout(() => {
       player.spawn(map.spawn.x, map.spawn.z, map.spawn.yaw);
+      game.girs.clearAround(map.spawn.x, map.spawn.z);   // no GIR waiting on the spot to bite you again
       for (const w of arsenal.weapons) w.reserve = Math.max(w.reserve, w.magSize * 3);
     }, 2600);
   };
@@ -339,6 +340,7 @@ function wireUI() {
 
   const openSettings = () => {
     if (!game.running) return;
+    $('sound-status').textContent = 'Sound: ' + audioStatus() + ' · volume ' + Math.round(settings.volume * 100) + '%';   // (read before pausing it)
     game.paused = true; setInputEnabled(false); suspendAudio(true);
     if (document.pointerLockElement) document.exitPointerLock();
     syncSettingsUI(); $('settings').classList.remove('hidden');

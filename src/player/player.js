@@ -35,6 +35,7 @@ export class Player {
     this.pos.set(x, floor + this.eye, z);
     this.vel.set(0, 0, 0); this.yaw = yaw; this.pitch = 0;
     this.health = 100; this.armour = 25; this.dead = false;
+    this.safeT = 3;                                   // a moment to get your bearings after (re)spawning
   }
 
   // Part of the kick stays (you have to pull down), part settles back.
@@ -43,7 +44,7 @@ export class Player {
   knock(vx, vy, vz) { this.vel.x += vx; this.vel.y = Math.max(this.vel.y, vy); this.vel.z += vz; this.onGround = false; this.shake = 0.5; }
 
   damage(amount, source) {
-    if (this.dead) return;
+    if (this.dead || this.safeT > 0) return;
     const absorbed = Math.min(this.armour, Math.round(amount * 0.6));
     this.armour -= absorbed;
     this.health = Math.max(0, this.health - (amount - absorbed));
@@ -54,6 +55,7 @@ export class Player {
   }
 
   update(dt) {
+    this.safeT = Math.max(0, (this.safeT || 0) - dt);
     // ---- look ----
     const touchScale = input.isTouch ? 0.0052 : 0.0024;
     const sens = settings.sensitivity * touchScale * this.aimAssistFactor * (1 - this.adsK * 0.45);

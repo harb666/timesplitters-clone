@@ -104,10 +104,15 @@ function signTexture(lines, bg, fg, w = 512, h = 256) {
 // view ranges (m): far = everything (haze by then), load/show = full house
 // detail (built well before it's shown), detail = small pieces, budget = ms a
 // frame spent building streamed detail
+// Full house detail (doors, sills, gutters, gardens...) is only built near
+// you: every house's light version (walls, roofs, windows, chimneys) is always
+// there, so nothing pops in, and phones don't run out of graphics memory as
+// you explore (with detail out to 560 m it kept growing until the 3-D view
+// was dropped).
 const RANGES = {
-  low: { far: 420, load: 420, show: 400, detail: 400, budget: 4 },
-  medium: { far: 620, load: 560, show: 540, detail: 560, budget: 6 },
-  high: { far: 800, load: 700, show: 680, detail: 700, budget: 8 },
+  low: { far: 420, load: 140, show: 130, detail: 400, budget: 4, keep: 40 },
+  medium: { far: 620, load: 200, show: 190, detail: 560, budget: 6, keep: 50 },
+  high: { far: 800, load: 300, show: 290, detail: 700, budget: 8, keep: 60 },
 };
 
 export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3, sunDir = new THREE.Vector3(0.45, 0.6, 0.3) } = {}) {
@@ -252,7 +257,7 @@ export function buildFirVale(scene, world, quality = 'medium', { haze = 0xc9ced3
   const rectDist = (k, pos) => { const [cx, cz] = k.split(',').map(Number), x0 = cx * CHUNK, z0 = cz * CHUNK; const dx = Math.max(x0 - pos.x, 0, pos.x - x0 - CHUNK), dz = Math.max(z0 - pos.z, 0, pos.z - z0 - CHUNK); return Math.hypot(dx, dz); };
   function stream(pos, budgetMs) {
     for (const k of houseChunks.keys()) if (!chunks.has(k) && rectDist(k, pos) < R.load) chunks.set(k, { list: houseChunks.get(k), i: 0, batch: null, meshes: null, ready: false });
-    for (const [k, c] of chunks) if (rectDist(k, pos) > R.load + 90) {
+    for (const [k, c] of chunks) if (rectDist(k, pos) > R.load + R.keep) {
       if (c.meshes) for (const m of c.meshes) { scene.remove(m); m.geometry.dispose(); }
       chunks.delete(k);
     }

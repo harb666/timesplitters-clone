@@ -2,7 +2,7 @@
 // material-aware impacts, and the acoustic environment of each shot.
 import * as THREE from 'three';
 import { weaponMaterials } from './materials.js';
-import { Kestrel, HallamSix } from './guns.js';
+import { Kestrel, HallamSix, Grizzly } from './guns.js';
 import { play } from '../audio/soundscape.js';
 import { settings } from '../core/settings.js';
 
@@ -15,7 +15,8 @@ export class Arsenal {
   constructor(game, vmScene, quality) {
     this.game = game;
     const M = this.M = weaponMaterials(quality);
-    this.weapons = [new Kestrel(game, M), new HallamSix(game, M)];
+    this.weapons = [new Kestrel(game, M), new HallamSix(game, M), new Grizzly(game, M)];
+    this.ready = Promise.all(this.weapons.map((w) => w.model.ready).filter(Boolean)).catch((e) => console.warn('weapon model failed to load', e));
     for (const w of this.weapons) { vmScene.add(w.rig); vmScene.add(w.arms); }
     this.index = 0; this.pending = -1;
     this.weapons[0].draw();

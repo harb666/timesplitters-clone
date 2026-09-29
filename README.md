@@ -217,3 +217,9 @@ GitHub Actions**. The game then lives at
   pavement and lawn replaced by the real street (the pipes plug into the
   neighbouring semis), fence and gnomes fitted to the plot, and the interior
   made walkable behind the front door.
+- Grizzly pistol based on ["LAR Grizzly Mark V .50AE Handgun"](https://sketchfab.com/3d-models/lar-grizzly-mark-v-50ae-handgun-a5d53bbd90e34dcaac1b7fffa2f6975d)
+  by [8sianDude](https://sketchfab.com/haoliu95), licensed under
+  [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/). Changed for this
+  game: levelled and scaled to real size, textures reduced, cut into frame,
+  slide and magazine so they move, and one of its cartridge cases used for
+  the ejected brass.

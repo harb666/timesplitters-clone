@@ -370,6 +370,7 @@ function wireUI() {
       initSoundscape({ quality: settings.quality, onProgress: (k) => { loading.textContent = `Recording the soundscape… ${Math.round(k * 100)}%`; } }),
       game.girs.load,                                   // GIRs are on the streets from the first frame
       game.zim.load,
+      game.arsenal.ready,                               // imported gun models
     ]);
     loading.textContent = 'Ready.';
     if (settings.gyro) requestGyro();

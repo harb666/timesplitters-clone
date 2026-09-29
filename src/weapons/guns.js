@@ -4,6 +4,7 @@ import { FPWeapon } from './fpWeapon.js';
 import { Timeline, sample } from './anim.js';
 import { buildAK } from './models/ak.js';
 import { buildRevolver, buildSpeedloader } from './models/revolver.js';
+import { buildGrizzly } from './models/grizzly.js';
 import { mech, playerShot } from '../audio/soundscape.js';
 
 const R = () => Math.random() - 0.5;
@@ -296,6 +297,142 @@ export class HallamSix extends FPWeapon {
       }
       this.reserve -= n; this.loadedAmmo(); this.dryCount = 0;
       this.loader.userData.rounds.forEach((r) => { r.visible = false; });
+      return;
+    }
+    super.onEvent(type, arg);
+  }
+}
+
+// =====================================================================
+// GRIZZLY .50 AE — big single-action semi-auto (imported model). Seven in
+// the mag, one heavy round per trigger pull; the slide runs back on every
+// shot, throws the empty brass out of the right-hand port, and locks open
+// when the mag runs dry.
+// =====================================================================
+export class Grizzly extends FPWeapon {
+  constructor(game, M) {
+    const model = buildGrizzly();
+    super(game, M, model, {
+      id: 'grizzly', name: 'GRIZZLY .50 AE', magSize: 7, reserve: 35, flashSize: 0.24, semiOnly: true,
+      hip: { pos: [0.1, -0.088, -0.26], rot: [0.03, 0.06, -0.03] },
+      sprint: { pos: [0.0, -0.1, 0.08], rot: [-0.95, 0.3, 0.3] },
+      eyeRelief: 0.38, aimFov: 58,
+      rightHand: { pos: [0.026, -0.112, 0.05], finger: [0, 0.3, -1], palm: [-1, 0.05, 0], pose: 'trigger' },
+      leftHand: { pos: [-0.04, -0.1, 0.012], finger: [0.9, 0.25, -0.5], palm: [1, 0.2, 0.3], pose: 'support' },
+      recoilStiff: 140, recoilDamp: 12, bloomRecover: 0.22, pivotPoint: [0, -0.04, -0.05],
+    });
+    this.slideT = 1; this.locked = false; this.trig = 0; this.ejected = true;
+    this.magHome = model.magPivot.position.clone();
+    model.ready.then(() => {
+      this.magHome.copy(model.magPivot.position);
+      if (model.caseGeo) game.casings.addKind('grizzly', model.caseGeo, model.caseMat);
+    });
+  }
+
+  updateFire(dt, inp) {
+    const g = this.game;
+    this.trig = inp.fire ? Math.min(1, this.trig + dt * 22) : Math.max(0, this.trig - dt * 12);
+    if (!inp.firePressed || this.cooldown > 0 || this.sprintK > 0.35 || this.lowerK > 0.1) return;
+    if (this.ammo <= 0) {
+      mech('ak_dry', 0.6); this.cooldown = 0.25;
+      if (this.reserve > 0) setTimeout(() => { if (this.state === 'idle') this.startReload(); }, 300); else g.hud.toast('NO AMMO');
+      return;
+    }
+    this.ammo--; this.cooldown = 0.17; this.slideT = 0; this.ejected = false;
+    if (this.ammo === 0) this.locked = true;                 // last round: the slide stays back
+    this.flashOn(); this.flashT = 0.06;
+    playerShot('revolver', g.arsenal.shotEnvironment());
+    this.kick(0.08, 0.3 + Math.random() * 0.05, R() * 0.05, 0.08 + R() * 0.05);
+    g.player.addRecoil(0.05 + Math.random() * 0.014, R() * 0.012);
+    const spread = (this.adsK > 0.5 ? 0.0018 : 0.018) + this.bloom + g.arsenal.movementSpread();
+    this.bloom = Math.min(0.035, this.bloom + 0.014);
+    g.arsenal.fireRay(this, spread, 95);
+    g.effects.muzzleSmoke(this.muzzleWorld(_a), g.player.forward(_b), 2);
+  }
+
+  animateParts(dt) {
+    const m = this.model;
+    // slide: 26 mm back and home again in ~80 ms (or held back when locked open)
+    this.slideT += dt;
+    let z = 0;
+    if (this.slideT < 0.08) { const k = this.slideT / 0.08; z = Math.sin(Math.min(1, k * 1.3) * Math.PI) * 0.026; }
+    if (this.locked && this.slideT > 0.035) z = 0.024;
+    if (!this.ejected && this.slideT > 0.02) { this.ejected = true; this.ejectCasing(); }
+    if (this.tl && this.tl.playing && this.tl.tracks.slide) z = this.tl.get('slide', z);
+    m.slide.position.z = z;
+    // magazine (reload tracks)
+    if (this.tl && this.tl.playing && this.tl.tracks.magPos) {
+      m.magPivot.rotation.x = this.tl.get('magRot', 0);
+      const mp = this.tl.get('magPos', [0, 0, 0]);
+      m.magPivot.position.set(this.magHome.x + mp[0], this.magHome.y + mp[1], this.magHome.z + mp[2]);
+    } else { m.magPivot.rotation.x = 0; m.magPivot.position.copy(this.magHome); }
+  }
+
+  ejectCasing() {
+    const g = this.game, cam = g.camera;
+    const p = this.vmToWorld(this.model.ejectPort, _a);
+    const right = _b.set(1, 0, 0).applyQuaternion(cam.quaternion), up = _c.set(0, 1, 0).applyQuaternion(cam.quaternion);
+    const v = new THREE.Vector3().addScaledVector(right, 2.6 + Math.random()).addScaledVector(up, 2.4 + Math.random() * 0.9);
+    v.add(new THREE.Vector3(0, 0, 1).applyQuaternion(cam.quaternion).multiplyScalar(0.6));
+    v.x += g.player.vel.x; v.z += g.player.vel.z;
+    g.casings.spawn(g.casings.has('grizzly') ? 'grizzly' : 'pistol', p, v);
+  }
+
+  startReload() {
+    const empty = this.ammo === 0, L = this.cfg.leftHand.pos;
+    const grab = [-0.03, -0.2, 0.06];                          // where the left hand meets the new mag, below the grip
+    const tracks = {
+      pivotRot: [[0, [0, 0, 0]], [0.3, [0.45, 0.3, 0.5]], [1.35, [0.45, 0.3, 0.5]]],
+      pivotPos: [[0, [0, 0, 0]], [0.3, [-0.06, 0.1, 0.05]], [1.35, [-0.06, 0.1, 0.05]]],
+      // old mag drops out along the grip, new one comes up from below and is slapped home
+      magRot: [[0, 0]],
+      magPos: [[0, [0, 0, 0]], [0.32, [0, 0, 0]], [0.55, [0, -0.45, 0.12], 'in'], [0.6, [0, -0.45, 0.12]], [0.62, [0, -0.3, 0.09]], [1.05, [0, -0.12, 0.04]], [1.28, [0, -0.004, 0.001], 'out'], [1.32, [0, 0, 0]]],
+      lhW: [[0, 0], [0.3, 1, 'inOut']],
+      lhPos: [[0, L], [0.3, [-0.06, -0.12, 0.05]], [0.6, [-0.08, -0.36, 0.12]], [1.05, [-0.025, -0.17, 0.04]], [1.3, [-0.02, -0.12, 0.03]]],
+      lhFinger: [[0, this.cfg.leftHand.finger], [0.3, [0.2, 0.3, -1]]],
+      lhPalm: [[0, this.cfg.leftHand.palm], [0.3, [1, 0, 0]], [1.05, [0.3, 1, 0]], [1.3, [0.3, 1, 0]]],
+      lhPose: [[0, 0], [0.3, 0.6], [0.6, 1]],
+    };
+    const events = [[0.02, 'sound', 'cloth'], [0.3, 'sound', 'ak_mag_out'], [0.62, 'lhMag', true], [0.9, 'sound', 'cloth'], [1.28, 'sound', 'ak_mag_in'], [1.29, 'kick', 1], [1.32, 'lhMag', false]];
+    let dur;
+    if (!empty) {
+      tracks.pivotRot.push([1.75, [0, 0, 0]]); tracks.pivotPos.push([1.75, [0, 0, 0]]);
+      tracks.lhW.push([1.35, 1], [1.72, 0, 'inOut']); tracks.lhPos.push([1.72, L]); tracks.lhPose.push([1.35, 1], [1.7, 0]);
+      events.push([1.3, 'ammo', 1]);
+      dur = 1.85;
+    } else {
+      // empty: thumb the slide release and the slide slams home
+      tracks.pivotRot.push([1.6, [0.1, -0.05, 0.2]], [1.8, [0.1, -0.05, 0.2]], [2.15, [0, 0, 0]]);
+      tracks.pivotPos.push([1.6, [-0.03, 0.04, 0.02]], [1.8, [-0.03, 0.04, 0.02]], [2.15, [0, 0, 0]]);
+      tracks.lhW.push([1.35, 1], [2.1, 0, 'inOut']); tracks.lhPos.push([1.6, L], [2.1, L]); tracks.lhPose.push([1.35, 1], [1.8, 0]);
+      tracks.slide = [[0, 0.024], [1.62, 0.024], [1.66, 0, 'snap']];
+      events.push([1.3, 'ammo', 0], [1.62, 'unlock', 0], [1.63, 'sound', 'ak_rack_fwd'], [1.64, 'kick', 1.3], [1.64, 'ammo', 1]);
+      dur = 2.25;
+    }
+    this.state = 'reload';
+    this.tl = new Timeline(dur, tracks, events).start();
+  }
+
+  startInspect() {
+    this.state = 'inspect';
+    this.tl = new Timeline(2.4, {
+      pivotRot: [[0, [0, 0, 0]], [0.45, [0.2, 0.9, 0.4]], [1.3, [0.25, 0.95, 0.45]], [1.75, [0.05, -0.6, -0.3]], [2.05, [0.05, -0.6, -0.3]], [2.35, [0, 0, 0]]],
+      pivotPos: [[0, [0, 0, 0]], [0.45, [-0.07, 0.05, 0.08]], [2.05, [-0.06, 0.04, 0.07]], [2.35, [0, 0, 0]]],
+      slide: [[0, 0], [0.9, 0], [1.0, 0.022, 'inOut'], [1.2, 0.022], [1.24, 0, 'snap']],
+    }, [[0.05, 'sound', 'cloth'], [0.5, 'sound', 'handling'], [0.95, 'sound', 'ak_rack_back'], [1.24, 'sound', 'ak_rack_fwd'], [2.1, 'sound', 'cloth']]).start();
+  }
+
+  onEvent(type, arg) {
+    if (type === 'lhMag') {
+      this.lhOverride = arg ? { obj: this.model.mag, offset: new THREE.Vector3(-0.02, -0.06, 0.01), finger: [0.2, 0.3, -1], palm: [1, 0, 0], pose: 'grip' } : null;
+      return;
+    }
+    if (type === 'unlock') { this.locked = false; return; }
+    if (type === 'kick') { this.kick(0.012 * arg, -0.04 * arg, 0, 0.02 * arg); return; }
+    if (type === 'ammo') {
+      if (arg === 0) return;
+      const take = Math.min(this.magSize - this.ammo, this.reserve);
+      this.ammo += take; this.reserve -= take; this.locked = false;
       return;
     }
     super.onEvent(type, arg);

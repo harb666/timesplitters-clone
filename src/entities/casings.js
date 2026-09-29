@@ -15,7 +15,7 @@ export class Casings {
     const pistol = new THREE.Group();
     new PartBuilder().add(M.brass, lathe([[0, 0], [0.0055, 0], [0.0055, 0.0015], [0.0047, 0.0019], [0.0048, 0.033], [0.0042, 0.033]], 14)).build(pistol);
     this.geo = { rifle: rifle.children[0].geometry, pistol: pistol.children[0].geometry };
-    this.mat = M.brass;
+    this.mat = M.brass; this.mats = {};
     for (let i = 0; i < MAX; i++) {
       const m = new THREE.Mesh(this.geo.rifle, this.mat); m.visible = false; m.castShadow = true;
       scene.add(m);
@@ -24,9 +24,14 @@ export class Casings {
     this.i = 0;
   }
 
+  // a case shape from an imported gun model (with its own textured material)
+  addKind(kind, geo, mat) { this.geo[kind] = geo; if (mat) this.mats[kind] = mat; }
+  has(kind) { return !!this.geo[kind]; }
+
   spawn(kind, pos, vel) {
     const c = this.pool[this.i]; this.i = (this.i + 1) % MAX;
     c.m.geometry = this.geo[kind] || this.geo.rifle;
+    c.m.material = this.mats[kind] || this.mat;
     c.m.position.copy(pos); c.vel.copy(vel);
     c.spin.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 40);
     c.m.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);

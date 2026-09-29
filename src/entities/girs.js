@@ -1,4 +1,4 @@
-// GIR: little rogue robots loose on the streets. The model (src/models/gir.glb)
+// GIR: little rogue robots loose on the streets. The model (src/models/gir.json)
 // is a rigged glTF with Idle / Walk / Run / Jump clips. Each GIR mooches about
 // on his patch of pavement until he spots you (or hears gunfire), then sprints
 // at you with his arms flailing, screaming, and bites your ankles. Shoot him
@@ -10,7 +10,7 @@ import { mergeGeometries } from '../lib/addons/utils/BufferGeometryUtils.js';
 import { groundHeight as G } from '../core/world.js';
 import { play } from '../audio/soundscape.js';
 
-const MODEL_URL = new URL('../models/gir.glb', import.meta.url).href;
+const MODEL_URL = new URL('../models/gir.json', import.meta.url).href;   // glTF, buffer embedded
 const HP = 60, RUN = 5.8, WALK = 1.1, SEE = 30, LOSE = 75, BITE = 7;
 const HALF = 0.26, TALL = 0.62;          // hit box (a touch bigger than him, to be fair on a phone)
 const FAR = 170;                          // beyond this he's a speck in the haze: not drawn

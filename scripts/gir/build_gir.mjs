@@ -8,8 +8,9 @@
 // logical part; each part is rigidly bound to its bone (robot joints).
 // Animations: Idle, Walk, Run (bouncy, arms flailing), Jump, Duty (red eyes pose).
 //
-// Usage (needs `npm i three@0.186` in this folder; writes src/models/gir.glb):
-//   node build_gir.mjs ../../src/models/gir.glb --variant=green
+// Usage (needs `npm i three@0.186` in this folder):
+//   node build_gir.mjs gir.glb --variant=green
+//   node glb2json.mjs gir.glb ../../src/models/gir.json   (the game loads the JSON form)
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';

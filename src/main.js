@@ -22,6 +22,7 @@ import { makeSky, SUN_DIR } from './render/sky.js';
 import { Crowd } from './entities/crowd.js';
 import { Pigeons } from './entities/pigeons.js';
 import { GrassField } from './render/grass.js';
+import { Girs } from './entities/girs.js';
 
 const QUALITY = {
   low: { dpr: 1, fogNear: 90, fogFar: 420, aa: false, shadows: 0 },
@@ -117,13 +118,16 @@ function boot() {
   const crowd = new Crowd(scene, world, map, hud, { count: settings.quality === 'low' ? 80 : 120 });
   game.crowd = crowd;
   const grass = new GrassField(scene, map.grassAt, settings.quality);
+  // GIRs on the loose
+  const girs = new Girs(game, map, { count: settings.quality === 'low' ? 4 : 6 });
+  game.girs = girs;
   const pigeons = new Pigeons(scene, map.shopSpots.filter((s, i) => i % 3 === 0).map((s) => [s.front[0], s.front[1]]), settings.quality === 'low' ? 40 : 80);
 
   // ---- game-level helpers used by the weapon ----
   const tmpV = new THREE.Vector3();
   game.findAimTarget = (origin, fwd, maxAngle) => {
     let best = null, bestA = maxAngle;
-    const drones = game.drones ? game.drones.targets() : [];
+    const drones = [...(game.drones ? game.drones.targets() : []), ...girs.targets()];
     for (const q of drones) {
       const d = tmpV.copy(q).sub(origin); const dist = d.length(); if (dist > 90) continue; d.divideScalar(dist);
       const a = Math.acos(Math.min(1, d.dot(fwd)));
@@ -144,11 +148,11 @@ function boot() {
     return best;
   };
   game.addScore = (n, label) => { game.score += n; hud.score(game.score); if (label) hud.toast(`${label} +${n}`); sfx.score(); };
-  game.onGunfire = () => { for (const n of game.npcs) n.onLoudNoise(player.pos.x, player.pos.z); crowd.onLoudNoise(player.pos.x, player.pos.z); pigeons.scare(player.pos.x, player.pos.z, 45); };
+  game.onGunfire = () => { for (const n of game.npcs) n.onLoudNoise(player.pos.x, player.pos.z); crowd.onLoudNoise(player.pos.x, player.pos.z); girs.onLoudNoise(player.pos.x, player.pos.z); pigeons.scare(player.pos.x, player.pos.z, 45); };
 
   player.onDamage = () => hud.damageFlash();
   player.onDeath = (src) => {
-    hud.toast(src === 'car' ? 'FLATTENED BY A FALCON R' : 'YOU\'VE HAD IT', 2.5);
+    hud.toast(src === 'car' ? 'FLATTENED BY A FALCON R' : src === 'gir' ? 'GIR GOT YOU' : 'YOU\'VE HAD IT', 2.5);
     hud.subtitle('<b>Respawning at the Mini Mart…</b> (checkpoint)', 2.5);
     setTimeout(() => {
       player.spawn(map.spawn.x, map.spawn.z, map.spawn.yaw);
@@ -235,6 +239,7 @@ function boot() {
     map.updateLOD(player.pos, dt, player.yaw);
     crowd.update(dt, player);
     pigeons.update(dt, player);
+    girs.update(dt);
     grass.update(dt, player.pos);
     minimap.update(player, game.cars, dez, mission.target());
     for (const n of game.npcs) n.update(dt, player);

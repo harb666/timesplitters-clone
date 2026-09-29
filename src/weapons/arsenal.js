@@ -73,6 +73,7 @@ export class Arsenal {
     if (tag === 'car') return point.y - box.minY > 0.95 ? 'glass' : 'metal';
     if (tag === 'parked-car') return point.y - box.minY > 0.95 ? 'glass' : 'metal';
     if (tag === 'npc') return 'flesh';
+    if (tag === 'gir') return 'metal';
     if (tag === 'bin' || tag === 'loo') return 'plastic';
     if (METAL.has(tag)) return 'metal';
     if (WOOD.has(tag)) return 'wood';
@@ -124,7 +125,7 @@ export class Arsenal {
     const n = _n.set(0, 0, 0);
     if (res.normal) n.fromArray(res.normal); else if (res.normalAxis >= 0) n.setComponent(res.normalAxis, res.normalSign); else n.set(0, 1, 0);
     const box = res.box, mat = this.material(box, p);
-    if (box && box.owner && (box.tag === 'car' || box.tag === 'npc' || box.tag === 'drone')) { box.owner.onShot?.(p, damage); g.hud.hitmarker(); }
+    if (box && box.owner && (box.tag === 'car' || box.tag === 'npc' || box.tag === 'drone' || box.tag === 'gir')) { box.owner.onShot?.(p, damage); g.hud.hitmarker(); }
     g.effects.impact(p.clone(), n.clone(), mat);
     const impactName = { stone: 'concrete', paving: 'concrete', grass: 'dirt' }[mat] || mat;
     play('impact_' + impactName, { pos: p.clone(), gain: 1 });

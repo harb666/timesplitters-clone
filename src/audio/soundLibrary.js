@@ -212,6 +212,38 @@ function explosion(sr, rnd) {
   return [L, R];
 }
 
+// ---------------------------------------------------------------- GIR
+// A little robot's shriek: a bright buzzy voice (sawtooth + breath) pushed
+// through "AAAH" formants pitched like a cartoon kid, with a fast warble and
+// a touch of sample-rate crunch so it sounds like it comes out of a speaker.
+function girVoice(sr, rnd, kind) {
+  const P = kind === 'squeal' ? { d: rnd.range(0.22, 0.34), f0: 1250, rise: 1.25, fall: 0.8, vib: 0.05 }
+    : kind === 'giggle' ? { d: rnd.range(0.5, 0.7), f0: 900, rise: 1.1, fall: 0.9, vib: 0.02 }
+    : { d: rnd.range(1.0, 1.4), f0: 700, rise: 1.45, fall: 0.75, vib: 0.07 };
+  const n = Math.floor(sr * P.d), src = new Float32Array(n);
+  const vRate = rnd.range(8, 11); let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr, u = t / P.d;
+    let f = P.f0 * (1 + (P.rise - 1) * Math.min(1, t / 0.12)) * (u > 0.7 ? 1 - (1 - P.fall) * (u - 0.7) / 0.3 : 1);
+    f *= 1 + P.vib * Math.sin(2 * Math.PI * vRate * t) + 0.02 * Math.sin(t * 57 + rnd.next());
+    if (kind === 'giggle') f *= 1 + 0.18 * Math.max(0, Math.sin(2 * Math.PI * 7 * t));
+    ph += f / sr; ph -= Math.floor(ph);
+    let a = Math.min(1, t / 0.025) * Math.min(1, (P.d - t) / 0.12);
+    if (kind === 'giggle') a *= 0.35 + 0.65 * Math.max(0, Math.sin(2 * Math.PI * 7 * t));
+    src[i] = ((2 * ph - 1) * 0.85 + rnd.bi() * 0.18) * a;
+  }
+  const out = new Float32Array(n);
+  for (const [F, q, g] of [[1150, 5, 1], [1750, 6, 0.75], [3300, 8, 0.4], [4600, 9, 0.18]]) {
+    const b = Float32Array.from(src); filter(b, sr, 'bandpass', F * rnd.range(0.95, 1.05), q); mix(out, b, 0, g);
+  }
+  // speaker crunch: hold every few samples (lo-fi) and blend it in
+  const hold = Math.max(2, Math.round(sr / 12000));
+  for (let i = 0, v = 0; i < n; i++) { if (i % hold === 0) v = out[i]; out[i] = out[i] * 0.6 + v * 0.4; }
+  filter(out, sr, 'highpass', 300);
+  saturate(out, 2.5); normalize(out, 0.9); fadeOut(out, sr, 0.03);
+  return [out];
+}
+
 // ---------------------------------------------------------------- builder
 export async function buildLibrary(ctx, progress) {
   const sr = ctx.sampleRate;
@@ -227,6 +259,7 @@ export async function buildLibrary(ctx, progress) {
   add('breath_in', 4, (r) => breath(sr, r, true)); add('breath_out', 4, (r) => breath(sr, r, false));
   add('cloth', 4, (r) => cloth(sr, r));
   add('explosion', 2, (r) => explosion(sr, r));
+  add('gir_scream', 4, (r) => girVoice(sr, r, 'scream')); add('gir_squeal', 5, (r) => girVoice(sr, r, 'squeal')); add('gir_giggle', 3, (r) => girVoice(sr, r, 'giggle'));
   // run jobs in slices so the page never freezes
   let i = 0;
   while (i < jobs.length) {

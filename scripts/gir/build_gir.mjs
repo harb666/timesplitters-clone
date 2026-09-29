@@ -235,7 +235,7 @@ if (MESH) {
     const b = /^PERNA/.test(node) ? side + 'UpperLeg' : /^BODY/.test(node) ? 'Chest' : /^(HEAD|group|BOLL)/.test(node) ? 'Head' : side + 'UpperArm';
     let mat = pick(o.material);
     if (/^group/.test(node) && mat === X.Teal) mat = X.Eye;          // both lenses glow the same (the source shades one darker)
-    add(node + '_' + o.material.name, g, mat, b);
+    add((node + '_' + o.material.name).replace(/[^\x20-\x7e]/g, ''), g, mat, b);   // source names have mangled accents (BRAÇO)
   });
 }
 

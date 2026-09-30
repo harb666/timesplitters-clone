@@ -109,6 +109,10 @@ export class ZimHouse {
       world.addOBB(sx, sz, 0.65 * S, 0.14 * S, YAW, street - 1, this.lawn - k * stepH, 'wall');
     }
     this.steps = n;
+    // Fixed clear pavement spot beyond the front garden (front edge z=2.9).
+    // Local +z is the house's outward/street direction, so YAW faces the road.
+    const [harbingerX, harbingerZ] = toWorld(1.8, 4.45);
+    this.harbingerStand = { x: harbingerX, y: G(harbingerX, harbingerZ), z: harbingerZ, yaw: YAW };
     // fence along the semis' side and across the back (the part of the model's fence that's kept)
     for (const [a, b] of [[[-5.4, PL.z0 + 0.2], [-5.4, PL.z1 - 0.2]], [[-5.4, -10.8], [PL.x1 - 0.2, -10.8]]]) {
       const [ax, az] = toWorld(...a), [bx, bz] = toWorld(...b), len = Math.hypot(bx - ax, bz - az);

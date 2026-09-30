@@ -109,6 +109,10 @@ export class ZimHouse {
       world.addOBB(sx, sz, 0.65 * S, 0.14 * S, YAW, street - 1, this.lawn - k * stepH, 'wall');
     }
     this.steps = n;
+    // Pavement/road-side loop used by the Harbinger NPC. Keep it here so the
+    // patrol stays aligned if the house is moved or rotated later.
+    this.harbingerPatrol = [[-3.2, 4.35], [0.2, 4.45], [4.8, 3.9], [5.25, -2.4], [5.1, -8.2], [4.9, -2.6]]
+      .map(([mx, mz], i) => { const [x, z] = toWorld(mx, mz); return { x, z, y: G(x, z), run: i === 3 || i === 4, yaw: YAW }; });
     // fence along the semis' side and across the back (the part of the model's fence that's kept)
     for (const [a, b] of [[[-5.4, PL.z0 + 0.2], [-5.4, PL.z1 - 0.2]], [[-5.4, -10.8], [PL.x1 - 0.2, -10.8]]]) {
       const [ax, az] = toWorld(...a), [bx, bz] = toWorld(...b), len = Math.hypot(bx - ax, bz - az);
